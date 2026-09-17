@@ -63,7 +63,8 @@ const CanvasRendererContent: React.FC<CanvasRendererProps> = ({
 
   const handleCanvasClick = (e: React.MouseEvent) => {
     // If clicking outside any node
-    if ((e.target as HTMLElement).id === 'canvas-background-stage') {
+    const targetId = (e.target as HTMLElement).id;
+    if (targetId === 'canvas-background-stage' || targetId === 'canvas-stage-inner') {
       onSelectNode(null);
     }
   };
@@ -122,8 +123,12 @@ const CanvasRendererContent: React.FC<CanvasRendererProps> = ({
       onMouseLeave={() => {
         setHoveredNodeId(null);
       }}
-      className="flex-1 bg-slate-100/70 p-6 md:p-8 overflow-y-auto flex flex-col items-center justify-start min-h-[500px] relative select-none"
+      className="flex-1 bg-slate-100/70 overflow-auto relative select-none"
     >
+      <div
+        id="canvas-stage-inner"
+        className="min-w-fit w-full min-h-full p-6 md:p-8 flex flex-col items-center justify-start"
+      >
       {/* Floating Action Toolbar for Selected Node */}
       {selectedNode && (
         <div
@@ -211,7 +216,7 @@ const CanvasRendererContent: React.FC<CanvasRendererProps> = ({
       {/* Surface Frame Simulation Container */}
       <div
         id="widget-surface-container"
-        className={`w-full transition-all duration-200 ${
+        className={`w-full min-w-[360px] transition-all duration-200 ${
           surface === 'slack'
             ? 'max-w-xl bg-white rounded-lg shadow-md border border-slate-300 p-4'
             : surface === 'chat'
@@ -259,6 +264,7 @@ const CanvasRendererContent: React.FC<CanvasRendererProps> = ({
         <span>Previewing active surface: <strong>{surface.toUpperCase()}</strong></span>
         <span>•</span>
         <span>Click any element to inspect & modify properties</span>
+      </div>
       </div>
     </div>
   );
