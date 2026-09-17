@@ -1,0 +1,6 @@
+{
+  "name": "Salesforce HXL Widget Composer",
+  "description": "Visual drag-and-drop composer for Salesforce Headless Experience Layer (HXL) widgets with real-time UI preview, schema auto-generation, and DX bundle export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
