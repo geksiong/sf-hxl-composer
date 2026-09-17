@@ -76,10 +76,11 @@ function findDropTargetAtPoint(
         continue;
       }
 
-      // Cannot drop parent into its own child
+      // Cannot drop parent into its own child (canvas wrapper or tree branch)
       if (draggingItem && draggingItem.nodeId) {
-        const isDescendant = targetEl.closest(`[data-hxl-target-id="${draggingItem.nodeId}"]`);
-        if (isDescendant) continue;
+        const isCanvasDescendant = targetEl.closest(`[id="hxl-wrapper-${draggingItem.nodeId}"]`);
+        const isTreeDescendant = targetEl.closest(`[data-hxl-tree-branch="${draggingItem.nodeId}"]`);
+        if (isCanvasDescendant || isTreeDescendant) continue;
       }
 
       const rect = targetEl.getBoundingClientRect();
@@ -115,8 +116,8 @@ function findDropTargetAtPoint(
       };
     }
 
-    // Check if over canvas stage
-    const stageEl = el.closest('[data-hxl-canvas-stage]') as HTMLElement | null;
+    // Check if over canvas stage or tree outline stage
+    const stageEl = (el.closest('[data-hxl-canvas-stage]') || el.closest('[data-hxl-tree-stage]')) as HTMLElement | null;
     if (stageEl) {
       const rootId = stageEl.getAttribute('data-root-id') || 'root_widget';
       return {
@@ -132,8 +133,18 @@ function findDropTargetAtPoint(
 let activeMoveHandler: ((e: PointerEvent) => void) | null = null;
 let activeUpHandler: ((e: PointerEvent) => void) | null = null;
 let activeKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+let lastDragEndTime = 0;
+
+export function wasRecentlyDragged(): boolean {
+  return Date.now() - lastDragEndTime < 180;
+}
 
 export function cancelPointerDrag() {
+  if (typeof document !== 'undefined') {
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+  }
+
   if (activeMoveHandler) {
     window.removeEventListener('pointermove', activeMoveHandler);
     activeMoveHandler = null;
@@ -168,7 +179,7 @@ export function startPointerDrag(item: DragItem, e: React.PointerEvent) {
 
   const startX = e.clientX;
   const startY = e.clientY;
-  const DRAG_THRESHOLD = 4; // pixels
+  const DRAG_THRESHOLD = 3; // pixels for immediate response
   let dragStarted = false;
 
   const onMove = (moveEvt: PointerEvent) => {
@@ -176,6 +187,10 @@ export function startPointerDrag(item: DragItem, e: React.PointerEvent) {
     if (!dragStarted) {
       if (dist >= DRAG_THRESHOLD) {
         dragStarted = true;
+        if (typeof document !== 'undefined') {
+          document.body.style.userSelect = 'none';
+          document.body.style.cursor = 'grabbing';
+        }
         currentPointerState.isDragging = true;
         currentPointerState.item = item;
         setGlobalDragState({
@@ -199,14 +214,17 @@ export function startPointerDrag(item: DragItem, e: React.PointerEvent) {
   };
 
   const onUp = (upEvt: PointerEvent) => {
-    if (dragStarted && currentPointerState.item && currentPointerState.hoverTarget) {
-      const source = currentPointerState.item;
-      const target = currentPointerState.hoverTarget;
-      if (globalDropCallback) {
-        try {
-          globalDropCallback(source, target);
-        } catch (err) {
-          console.error('Error during drop execution', err);
+    if (dragStarted) {
+      lastDragEndTime = Date.now();
+      if (currentPointerState.item && currentPointerState.hoverTarget) {
+        const source = currentPointerState.item;
+        const target = currentPointerState.hoverTarget;
+        if (globalDropCallback) {
+          try {
+            globalDropCallback(source, target);
+          } catch (err) {
+            console.error('Error during drop execution', err);
+          }
         }
       }
     }

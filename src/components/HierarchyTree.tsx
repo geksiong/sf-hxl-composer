@@ -22,6 +22,7 @@ import {
   setGlobalDragState,
   startPointerDrag,
   usePointerDragState,
+  wasRecentlyDragged,
 } from '../utils/dragManager';
 
 interface HierarchyTreeProps {
@@ -180,11 +181,16 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
     const isDropInside = activeDropPos === 'inside';
 
     return (
-      <div key={node.id} className="flex flex-col select-none relative">
-        {/* Drop indicator before line */}
+      <div
+        key={node.id}
+        data-hxl-tree-branch={node.id}
+        className="flex flex-col select-none relative"
+      >
+        {/* Drop indicator before line (absolute to prevent layout jitter) */}
         {isDropBefore && (
-          <div className="h-1 bg-[#0070d2] rounded-full my-0.5 mx-2 z-20 flex items-center shadow-xs">
-            <span className="w-2 h-2 rounded-full bg-[#0070d2] -ml-1 border-2 border-white" />
+          <div className="absolute top-0 left-1.5 right-1.5 h-0.5 bg-[#0070d2] z-30 pointer-events-none flex items-center -translate-y-1/2">
+            <span className="w-2 h-2 rounded-full bg-[#0070d2] -ml-1 border-2 border-white shadow-xs" />
+            <div className="w-full h-0.5 bg-[#0070d2]" />
           </div>
         )}
 
@@ -193,16 +199,30 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
           data-hxl-can-nest={doc?.canHaveChildren ? 'true' : 'false'}
           data-hxl-is-root={isRoot ? 'true' : 'false'}
           data-hxl-is-horizontal="false"
-          onDragOver={(e) => handleTreeDragOver(e, node)}
-          onDragLeave={(e) => handleTreeDragLeave(e, node)}
-          onDrop={(e) => handleTreeDrop(e, node)}
-          onClick={() => onSelectNode(node.id)}
-          className={`group flex items-center justify-between py-1.5 px-2 rounded-md transition-all text-xs relative ${
+          onPointerDown={(e) => {
+            if (isRoot) return;
+            // Don't initiate drag if clicking buttons (collapse toggle, action buttons)
+            if ((e.target as HTMLElement).closest('button')) return;
+            startPointerDrag(
+              {
+                sourceType: 'canvas',
+                nodeId: node.id,
+                componentType: node.type,
+                label: doc?.displayName || node.type.replace('tile/', ''),
+              },
+              e
+            );
+          }}
+          onClick={() => {
+            if (wasRecentlyDragged()) return;
+            onSelectNode(node.id);
+          }}
+          className={`group flex items-center justify-between py-1.5 px-2 rounded-md transition-colors text-xs relative select-none touch-none ${
             !isRoot ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
           } ${
             isDraggingThis ? 'opacity-30 bg-slate-200 border border-dashed border-slate-400' : ''
           } ${
-            isDropInside ? 'bg-emerald-100 ring-2 ring-emerald-500 font-semibold' : ''
+            isDropInside ? 'bg-emerald-100 ring-2 ring-emerald-500 font-semibold text-emerald-900 shadow-xs' : ''
           } ${
             isSelected
               ? 'bg-blue-100 text-blue-900 font-semibold shadow-xs'
@@ -213,22 +233,10 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
           <div className="flex items-center gap-1.5 min-w-0">
             {!isRoot && (
               <span
-                onPointerDown={(e) => {
-                  e.stopPropagation();
-                  startPointerDrag(
-                    {
-                      sourceType: 'canvas',
-                      nodeId: node.id,
-                      componentType: node.type,
-                      label: doc?.displayName || node.type.replace('tile/', ''),
-                    },
-                    e
-                  );
-                }}
-                title="Drag row to reorder"
-                className="text-slate-300 group-hover:text-slate-600 hover:text-[#0070d2] cursor-grab active:cursor-grabbing touch-none"
+                title="Drag to reorder"
+                className="text-slate-400 group-hover:text-slate-600 hover:text-[#0070d2] cursor-grab active:cursor-grabbing -ml-1 p-0.5 rounded shrink-0"
               >
-                <GripVertical className="w-3 h-3" />
+                <GripVertical className="w-3.5 h-3.5" />
               </span>
             )}
 
@@ -328,10 +336,11 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
           </div>
         </div>
 
-        {/* Drop indicator after line */}
+        {/* Drop indicator after line (absolute to prevent layout jitter) */}
         {isDropAfter && (
-          <div className="h-1 bg-[#0070d2] rounded-full my-0.5 mx-2 z-20 flex items-center shadow-xs">
-            <span className="w-2 h-2 rounded-full bg-[#0070d2] -ml-1 border-2 border-white" />
+          <div className="absolute bottom-0 left-1.5 right-1.5 h-0.5 bg-[#0070d2] z-30 pointer-events-none flex items-center translate-y-1/2">
+            <span className="w-2 h-2 rounded-full bg-[#0070d2] -ml-1 border-2 border-white shadow-xs" />
+            <div className="w-full h-0.5 bg-[#0070d2]" />
           </div>
         )}
 
@@ -357,7 +366,11 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
           <span className="text-3xs text-slate-400">Drag items to reorder & nest</span>
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-2">
+      <div
+        data-hxl-tree-stage="true"
+        data-root-id={rootNode.id}
+        className="flex-1 overflow-y-auto p-2"
+      >
         {renderTreeItem(rootNode, 0, true)}
       </div>
     </div>
