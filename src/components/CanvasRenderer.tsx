@@ -17,6 +17,7 @@ import { HXL_COMPONENTS } from '../data/hxlComponentCatalog';
 import { DropPayload, HXLNodeRenderer } from './HXLNodeRenderer';
 import {
   getGlobalDragState,
+  getLastDragState,
   setGlobalDragState,
   useGlobalDrag,
   parseHxlDragPayload,
@@ -62,7 +63,8 @@ const CanvasRendererContent: React.FC<CanvasRendererProps> = ({
   const [isDragOverRoot, setIsDragOverRoot] = React.useState(false);
 
   const handleCanvasClick = (e: React.MouseEvent) => {
-    // If clicking outside any node
+    // Clear any stuck drag state when clicking the canvas
+    clearDragStateImmediately();
     const targetId = (e.target as HTMLElement).id;
     if (targetId === 'canvas-background-stage' || targetId === 'canvas-stage-inner') {
       onSelectNode(null);
@@ -71,11 +73,13 @@ const CanvasRendererContent: React.FC<CanvasRendererProps> = ({
 
   const handleRootDragOver = (e: React.DragEvent) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setIsDragOverRoot(true);
+    const currentDrag = getGlobalDragState() || getLastDragState();
+    e.dataTransfer.dropEffect = currentDrag?.sourceType === 'palette' ? 'copy' : 'move';
+    setIsDragOverRoot((prev) => (prev ? prev : true));
   };
 
-  const handleRootDragLeave = () => {
+  const handleRootDragLeave = (e: React.DragEvent) => {
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setIsDragOverRoot(false);
   };
 
@@ -111,6 +115,8 @@ const CanvasRendererContent: React.FC<CanvasRendererProps> = ({
   return (
     <div
       id="canvas-background-stage"
+      data-hxl-canvas-stage="true"
+      data-root-id={rootNode.id}
       onClick={handleCanvasClick}
       onDragOver={handleRootDragOver}
       onDragLeave={handleRootDragLeave}
@@ -216,7 +222,9 @@ const CanvasRendererContent: React.FC<CanvasRendererProps> = ({
       {/* Surface Frame Simulation Container */}
       <div
         id="widget-surface-container"
-        className={`w-full min-w-[360px] transition-all duration-200 ${
+        className={`w-full min-w-[360px] transition-all duration-150 ${
+          isDragOverRoot ? 'ring-2 ring-blue-500 ring-offset-2' : ''
+        } ${
           surface === 'slack'
             ? 'max-w-xl bg-white rounded-lg shadow-md border border-slate-300 p-4'
             : surface === 'chat'
@@ -250,13 +258,6 @@ const CanvasRendererContent: React.FC<CanvasRendererProps> = ({
             onDropPayload={handleDropPayload}
           />
         </div>
-
-        {/* Drop zone indicator when dragging over root */}
-        {isDragOverRoot && (
-          <div className="mt-4 border-2 border-dashed border-blue-500 bg-blue-50/50 rounded-lg p-6 text-center text-xs text-blue-700 font-medium">
-            Drop component here to append to widget root
-          </div>
-        )}
       </div>
 
       {/* Surface Helper Footer */}

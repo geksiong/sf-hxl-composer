@@ -16,9 +16,12 @@ import { HXL_COMPONENTS } from '../data/hxlComponentCatalog';
 import {
   clearDragStateImmediately,
   getGlobalDragState,
+  getLastDragState,
   parseHxlDragPayload,
   serializeHxlDrag,
   setGlobalDragState,
+  startPointerDrag,
+  usePointerDragState,
 } from '../utils/dragManager';
 
 interface HierarchyTreeProps {
@@ -28,7 +31,7 @@ interface HierarchyTreeProps {
   onMoveNode: (id: string, direction: 'up' | 'down') => void;
   onDuplicateNode: (id: string) => void;
   onDeleteNode: (id: string) => void;
-  onInsertNode: (newNodeType: string, targetId: string) => void;
+  onInsertNode: (newNodeType: string, targetId: string, position?: 'inside' | 'before' | 'after') => void;
   onReorderNode: (sourceId: string, targetId: string, position: 'inside' | 'before' | 'after') => void;
 }
 
@@ -42,6 +45,7 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
   onInsertNode,
   onReorderNode,
 }) => {
+  const pointerDragState = usePointerDragState();
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{
@@ -74,11 +78,10 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
       e.dataTransfer.setData('application/hxl-component', node.type);
     } catch {}
     e.dataTransfer.setData('text/plain', serializeHxlDrag(payload));
-    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.effectAllowed = 'all';
   };
 
   const handleTreeDragEnd = (e: React.DragEvent) => {
-    e.stopPropagation();
     setDraggingNodeId(null);
     setDropTarget(null);
     clearDragStateImmediately();
@@ -88,15 +91,15 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
     e.preventDefault();
     e.stopPropagation();
 
-    const currentDrag = getGlobalDragState();
+    const currentDrag = getGlobalDragState() || getLastDragState();
     const sourceId = currentDrag?.nodeId || draggingNodeId;
 
-    if (sourceId === node.id) {
+    if (sourceId && sourceId === node.id) {
       setDropTarget(null);
       return;
     }
 
-    e.dataTransfer.dropEffect = 'move';
+    e.dataTransfer.dropEffect = currentDrag?.sourceType === 'palette' ? 'copy' : 'move';
     const rect = e.currentTarget.getBoundingClientRect();
     const offsetY = e.clientY - rect.top;
     const ratio = rect.height > 0 ? offsetY / rect.height : 0.5;
@@ -104,25 +107,29 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
     const doc = HXL_COMPONENTS.find((c) => c.type === node.type);
     const canNest = Boolean(doc?.canHaveChildren);
 
+    let nextPos: 'inside' | 'before' | 'after' = 'inside';
     if (canNest) {
       if (ratio < 0.25) {
-        setDropTarget({ id: node.id, position: 'before' });
+        nextPos = 'before';
       } else if (ratio > 0.75) {
-        setDropTarget({ id: node.id, position: 'after' });
+        nextPos = 'after';
       } else {
-        setDropTarget({ id: node.id, position: 'inside' });
+        nextPos = 'inside';
       }
     } else {
-      setDropTarget({
-        id: node.id,
-        position: ratio < 0.5 ? 'before' : 'after',
-      });
+      nextPos = ratio < 0.5 ? 'before' : 'after';
     }
+
+    setDropTarget((prev) => {
+      if (prev?.id === node.id && prev.position === nextPos) return prev;
+      return { id: node.id, position: nextPos };
+    });
   };
 
   const handleTreeDragLeave = (e: React.DragEvent, node: HXLNode) => {
     e.preventDefault();
     e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     if (dropTarget?.id === node.id) {
       setDropTarget(null);
     }
@@ -146,7 +153,7 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
         onReorderNode(payload.nodeId, node.id, targetPos);
       }
     } else if (payload.sourceType === 'palette' && payload.componentType) {
-      onInsertNode(payload.componentType, node.id);
+      onInsertNode(payload.componentType, node.id, targetPos);
     }
   };
 
@@ -156,11 +163,21 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
     const isCollapsed = collapsedNodes[node.id];
     const doc = HXL_COMPONENTS.find((c) => c.type === node.type);
     const isRoot = node.id === rootNode.id;
-    const isDraggingThis = draggingNodeId === node.id;
 
-    const isDropBefore = dropTarget?.id === node.id && dropTarget.position === 'before';
-    const isDropAfter = dropTarget?.id === node.id && dropTarget.position === 'after';
-    const isDropInside = dropTarget?.id === node.id && dropTarget.position === 'inside';
+    const isHoveredTarget = pointerDragState.hoverTarget?.targetNodeId === node.id;
+    const activeDropPos = isHoveredTarget
+      ? pointerDragState.hoverTarget?.position
+      : dropTarget?.id === node.id
+      ? dropTarget.position
+      : null;
+
+    const isDraggingThis =
+      (pointerDragState.isDragging && pointerDragState.item?.nodeId === node.id) ||
+      draggingNodeId === node.id;
+
+    const isDropBefore = activeDropPos === 'before';
+    const isDropAfter = activeDropPos === 'after';
+    const isDropInside = activeDropPos === 'inside';
 
     return (
       <div key={node.id} className="flex flex-col select-none relative">
@@ -172,9 +189,10 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
         )}
 
         <div
-          draggable={!isRoot}
-          onDragStart={(e) => handleTreeDragStart(e, node)}
-          onDragEnd={handleTreeDragEnd}
+          data-hxl-target-id={node.id}
+          data-hxl-can-nest={doc?.canHaveChildren ? 'true' : 'false'}
+          data-hxl-is-root={isRoot ? 'true' : 'false'}
+          data-hxl-is-horizontal="false"
           onDragOver={(e) => handleTreeDragOver(e, node)}
           onDragLeave={(e) => handleTreeDragLeave(e, node)}
           onDrop={(e) => handleTreeDrop(e, node)}
@@ -195,8 +213,20 @@ export const HierarchyTree: React.FC<HierarchyTreeProps> = ({
           <div className="flex items-center gap-1.5 min-w-0">
             {!isRoot && (
               <span
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  startPointerDrag(
+                    {
+                      sourceType: 'canvas',
+                      nodeId: node.id,
+                      componentType: node.type,
+                      label: doc?.displayName || node.type.replace('tile/', ''),
+                    },
+                    e
+                  );
+                }}
                 title="Drag row to reorder"
-                className="text-slate-300 group-hover:text-slate-600 hover:text-[#0070d2] cursor-grab active:cursor-grabbing"
+                className="text-slate-300 group-hover:text-slate-600 hover:text-[#0070d2] cursor-grab active:cursor-grabbing touch-none"
               >
                 <GripVertical className="w-3 h-3" />
               </span>

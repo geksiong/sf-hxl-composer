@@ -1,69 +1,310 @@
 import React, { useEffect, useState } from 'react';
 
+export interface DragItem {
+  sourceType: 'palette' | 'canvas';
+  componentType?: string;
+  nodeId?: string;
+  label: string;
+}
+
+export interface HoverTarget {
+  targetNodeId: string;
+  position: 'inside' | 'before' | 'after';
+  label?: string;
+}
+
+export type DropCallback = (source: DragItem, target: HoverTarget) => void;
+
+export interface PointerDragState {
+  isDragging: boolean;
+  item: DragItem | null;
+  hoverTarget: HoverTarget | null;
+  x: number;
+  y: number;
+}
+
+// Global active pointer drag state
+let currentPointerState: PointerDragState = {
+  isDragging: false,
+  item: null,
+  hoverTarget: null,
+  x: 0,
+  y: 0,
+};
+
+const pointerListeners = new Set<(state: PointerDragState) => void>();
+let globalDropCallback: DropCallback | null = null;
+
+export function registerGlobalDropCallback(cb: DropCallback): () => void {
+  globalDropCallback = cb;
+  return () => {
+    if (globalDropCallback === cb) {
+      globalDropCallback = null;
+    }
+  };
+}
+
+function notifyPointerListeners() {
+  const snapshot = { ...currentPointerState };
+  pointerListeners.forEach((fn) => {
+    try {
+      fn(snapshot);
+    } catch (err) {
+      console.error('Error in pointer drag listener', err);
+    }
+  });
+}
+
+function findDropTargetAtPoint(
+  x: number,
+  y: number,
+  draggingItem: DragItem | null
+): HoverTarget | null {
+  if (typeof document === 'undefined') return null;
+
+  const elements = document.elementsFromPoint(x, y);
+  if (!elements || elements.length === 0) return null;
+
+  for (const el of elements) {
+    const targetEl = el.closest('[data-hxl-target-id]') as HTMLElement | null;
+    if (targetEl) {
+      const targetId = targetEl.getAttribute('data-hxl-target-id');
+      if (!targetId) continue;
+
+      // Cannot drop onto itself
+      if (draggingItem && draggingItem.nodeId && draggingItem.nodeId === targetId) {
+        continue;
+      }
+
+      // Cannot drop parent into its own child
+      if (draggingItem && draggingItem.nodeId) {
+        const isDescendant = targetEl.closest(`[data-hxl-target-id="${draggingItem.nodeId}"]`);
+        if (isDescendant) continue;
+      }
+
+      const rect = targetEl.getBoundingClientRect();
+      const isHorizontal = targetEl.getAttribute('data-hxl-is-horizontal') === 'true';
+      const canNest = targetEl.getAttribute('data-hxl-can-nest') === 'true';
+      const isRoot = targetEl.getAttribute('data-hxl-is-root') === 'true';
+
+      let ratio = 0.5;
+      if (isHorizontal) {
+        ratio = rect.width > 0 ? (x - rect.left) / rect.width : 0.5;
+      } else {
+        ratio = rect.height > 0 ? (y - rect.top) / rect.height : 0.5;
+      }
+
+      let position: 'inside' | 'before' | 'after' = 'inside';
+      if (isRoot) {
+        position = 'inside';
+      } else if (canNest) {
+        if (ratio < 0.25) {
+          position = 'before';
+        } else if (ratio > 0.75) {
+          position = 'after';
+        } else {
+          position = 'inside';
+        }
+      } else {
+        position = ratio < 0.5 ? 'before' : 'after';
+      }
+
+      return {
+        targetNodeId: targetId,
+        position,
+      };
+    }
+
+    // Check if over canvas stage
+    const stageEl = el.closest('[data-hxl-canvas-stage]') as HTMLElement | null;
+    if (stageEl) {
+      const rootId = stageEl.getAttribute('data-root-id') || 'root_widget';
+      return {
+        targetNodeId: rootId,
+        position: 'inside',
+      };
+    }
+  }
+
+  return null;
+}
+
+let activeMoveHandler: ((e: PointerEvent) => void) | null = null;
+let activeUpHandler: ((e: PointerEvent) => void) | null = null;
+let activeKeyHandler: ((e: KeyboardEvent) => void) | null = null;
+
+export function cancelPointerDrag() {
+  if (activeMoveHandler) {
+    window.removeEventListener('pointermove', activeMoveHandler);
+    activeMoveHandler = null;
+  }
+  if (activeUpHandler) {
+    window.removeEventListener('pointerup', activeUpHandler);
+    window.removeEventListener('pointercancel', activeUpHandler);
+    activeUpHandler = null;
+  }
+  if (activeKeyHandler) {
+    window.removeEventListener('keydown', activeKeyHandler);
+    activeKeyHandler = null;
+  }
+
+  currentPointerState = {
+    isDragging: false,
+    item: null,
+    hoverTarget: null,
+    x: 0,
+    y: 0,
+  };
+  setGlobalDragState(null);
+  notifyPointerListeners();
+}
+
+export function startPointerDrag(item: DragItem, e: React.PointerEvent) {
+  // Only handle main pointer button (left click or primary touch)
+  if (e.button !== 0) return;
+
+  // Clean up any lingering previous session
+  cancelPointerDrag();
+
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const DRAG_THRESHOLD = 4; // pixels
+  let dragStarted = false;
+
+  const onMove = (moveEvt: PointerEvent) => {
+    const dist = Math.hypot(moveEvt.clientX - startX, moveEvt.clientY - startY);
+    if (!dragStarted) {
+      if (dist >= DRAG_THRESHOLD) {
+        dragStarted = true;
+        currentPointerState.isDragging = true;
+        currentPointerState.item = item;
+        setGlobalDragState({
+          sourceType: item.sourceType,
+          nodeId: item.nodeId,
+          componentType: item.componentType,
+        });
+      } else {
+        return;
+      }
+    }
+
+    currentPointerState.x = moveEvt.clientX;
+    currentPointerState.y = moveEvt.clientY;
+    currentPointerState.hoverTarget = findDropTargetAtPoint(
+      moveEvt.clientX,
+      moveEvt.clientY,
+      item
+    );
+    notifyPointerListeners();
+  };
+
+  const onUp = (upEvt: PointerEvent) => {
+    if (dragStarted && currentPointerState.item && currentPointerState.hoverTarget) {
+      const source = currentPointerState.item;
+      const target = currentPointerState.hoverTarget;
+      if (globalDropCallback) {
+        try {
+          globalDropCallback(source, target);
+        } catch (err) {
+          console.error('Error during drop execution', err);
+        }
+      }
+    }
+
+    cancelPointerDrag();
+  };
+
+  const onKeyDown = (keyEvt: KeyboardEvent) => {
+    if (keyEvt.key === 'Escape') {
+      cancelPointerDrag();
+    }
+  };
+
+  activeMoveHandler = onMove;
+  activeUpHandler = onUp;
+  activeKeyHandler = onKeyDown;
+
+  window.addEventListener('pointermove', onMove, { passive: true });
+  window.addEventListener('pointerup', onUp, { passive: true });
+  window.addEventListener('pointercancel', onUp, { passive: true });
+  window.addEventListener('keydown', onKeyDown);
+}
+
+export function usePointerDragState(): PointerDragState {
+  const [state, setState] = useState<PointerDragState>(() => ({ ...currentPointerState }));
+
+  useEffect(() => {
+    const update = (newState: PointerDragState) => setState(newState);
+    pointerListeners.add(update);
+    return () => {
+      pointerListeners.delete(update);
+    };
+  }, []);
+
+  return state;
+}
+
+export function useHoverTargetForNode(nodeId: string): 'inside' | 'before' | 'after' | null {
+  const [position, setPosition] = useState<'inside' | 'before' | 'after' | null>(null);
+
+  useEffect(() => {
+    const update = (state: PointerDragState) => {
+      if (state.isDragging && state.hoverTarget && state.hoverTarget.targetNodeId === nodeId) {
+        setPosition(state.hoverTarget.position);
+      } else {
+        setPosition(null);
+      }
+    };
+    pointerListeners.add(update);
+    return () => {
+      pointerListeners.delete(update);
+    };
+  }, [nodeId]);
+
+  return position;
+}
+
+// -------------------------------------------------------------
+// Backwards compatibility layer for legacy code
+// -------------------------------------------------------------
+
 export interface GlobalDragState {
   sourceType: 'palette' | 'canvas';
   nodeId?: string;
   componentType?: string;
 }
 
-type DragListener = (state: GlobalDragState | null) => void;
-const listeners = new Set<DragListener>();
-let activeDragState: GlobalDragState | null = null;
-let lastDragState: GlobalDragState | null = null;
-let clearLastTimer: any = null;
+type LegacyDragListener = (state: GlobalDragState | null) => void;
+const legacyListeners = new Set<LegacyDragListener>();
+let activeLegacyDragState: GlobalDragState | null = null;
+let lastLegacyDragState: GlobalDragState | null = null;
 
 export function setGlobalDragState(state: GlobalDragState | null) {
+  activeLegacyDragState = state;
   if (state) {
-    activeDragState = state;
-    lastDragState = state;
-    if (clearLastTimer) {
-      clearTimeout(clearLastTimer);
-      clearLastTimer = null;
-    }
-  } else {
-    activeDragState = null;
-    if (clearLastTimer) clearTimeout(clearLastTimer);
-    clearLastTimer = setTimeout(() => {
-      lastDragState = null;
-      clearLastTimer = null;
-    }, 400);
+    lastLegacyDragState = state;
   }
-
-  listeners.forEach((listener) => {
+  legacyListeners.forEach((fn) => {
     try {
-      listener(activeDragState);
-    } catch (err) {
-      console.error('Error in drag listener', err);
-    }
+      fn(activeLegacyDragState);
+    } catch {}
   });
 }
 
 export function getGlobalDragState(): GlobalDragState | null {
-  return activeDragState;
+  return activeLegacyDragState;
 }
 
 export function getLastDragState(): GlobalDragState | null {
-  return activeDragState || lastDragState;
+  return activeLegacyDragState || lastLegacyDragState;
 }
 
 export function clearDragStateImmediately() {
-  activeDragState = null;
-  if (clearLastTimer) {
-    clearTimeout(clearLastTimer);
-  }
-  // Retain lastDragState briefly so any simultaneous drop handlers can resolve payload
-  clearLastTimer = setTimeout(() => {
-    lastDragState = null;
-    clearLastTimer = null;
-  }, 400);
+  cancelPointerDrag();
+}
 
-  listeners.forEach((listener) => {
-    try {
-      listener(null);
-    } catch (err) {
-      console.error('Error in drag listener', err);
-    }
-  });
+export function cancelDrag() {
+  cancelPointerDrag();
 }
 
 export function serializeHxlDrag(payload: GlobalDragState): string {
@@ -76,68 +317,20 @@ export function serializeHxlDrag(payload: GlobalDragState): string {
 }
 
 export function parseHxlDragPayload(e?: React.DragEvent | DragEvent): GlobalDragState | null {
-  // 1. In-memory state (fastest and most reliable)
-  const current = getGlobalDragState() || getLastDragState();
-  if (current && (current.nodeId || current.componentType)) {
-    return current;
+  if (currentPointerState.item) {
+    return {
+      sourceType: currentPointerState.item.sourceType,
+      nodeId: currentPointerState.item.nodeId,
+      componentType: currentPointerState.item.componentType,
+    };
   }
-
-  if (!e || !e.dataTransfer) return null;
-
-  // 2. Structured JSON from standard text/plain
-  try {
-    const rawText = e.dataTransfer.getData('text/plain');
-    if (rawText) {
-      const parsed = JSON.parse(rawText);
-      if (parsed && parsed.__hxl) {
-        return {
-          sourceType: parsed.sourceType,
-          nodeId: parsed.nodeId,
-          componentType: parsed.componentType,
-        };
-      }
-    }
-  } catch {
-    // Ignore JSON parse errors
-  }
-
-  // 3. Custom MIME types
-  try {
-    const nodeId = e.dataTransfer.getData('application/hxl-node-id');
-    const compType = e.dataTransfer.getData('application/hxl-component');
-    if (nodeId) {
-      return {
-        sourceType: 'canvas',
-        nodeId,
-        componentType: compType || undefined,
-      };
-    }
-    if (compType && compType.startsWith('tile/')) {
-      return {
-        sourceType: 'palette',
-        componentType: compType,
-      };
-    }
-  } catch {}
-
-  // 4. Fallback text/plain if it's explicitly a tile type
-  try {
-    const plain = e.dataTransfer.getData('text/plain');
-    if (plain && plain.startsWith('tile/')) {
-      return {
-        sourceType: 'palette',
-        componentType: plain,
-      };
-    }
-  } catch {}
-
-  return null;
+  return activeLegacyDragState || lastLegacyDragState;
 }
 
-export function subscribeGlobalDragState(listener: DragListener): () => void {
-  listeners.add(listener);
+export function subscribeGlobalDragState(listener: LegacyDragListener): () => void {
+  legacyListeners.add(listener);
   return () => {
-    listeners.delete(listener);
+    legacyListeners.delete(listener);
   };
 }
 
@@ -152,29 +345,3 @@ export function useGlobalDrag(): GlobalDragState | null {
 
   return dragState;
 }
-
-// Global window cleanup safety: ensures drag state never gets permanently stuck
-if (typeof window !== 'undefined') {
-  window.addEventListener('dragend', () => {
-    setTimeout(() => {
-      clearDragStateImmediately();
-    }, 50);
-  });
-
-  window.addEventListener('mouseup', () => {
-    if (activeDragState) {
-      setTimeout(() => {
-        clearDragStateImmediately();
-      }, 50);
-    }
-  });
-
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && (activeDragState || lastDragState)) {
-      clearDragStateImmediately();
-    }
-  });
-}
-
-
-

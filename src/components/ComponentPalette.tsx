@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { HXL_COMPONENTS } from '../data/hxlComponentCatalog';
 import { HXLComponentDoc } from '../types/hxl';
-import { setGlobalDragState, serializeHxlDrag } from '../utils/dragManager';
+import { startPointerDrag } from '../utils/dragManager';
 
 interface ComponentPaletteProps {
   onSelectComponentToAdd: (componentType: string) => void;
@@ -82,24 +82,6 @@ export const ComponentPalette: React.FC<ComponentPaletteProps> = ({
     }
   };
 
-  const handleDragStart = (e: React.DragEvent, comp: HXLComponentDoc) => {
-    const payload = {
-      sourceType: 'palette' as const,
-      componentType: comp.type,
-    };
-    setGlobalDragState(payload);
-    const serialized = serializeHxlDrag(payload);
-    try {
-      e.dataTransfer.setData('application/hxl-component', comp.type);
-    } catch {}
-    e.dataTransfer.setData('text/plain', serialized);
-    e.dataTransfer.effectAllowed = 'copy';
-  };
-
-  const handleDragEnd = () => {
-    setGlobalDragState(null);
-  };
-
   return (
     <div className="w-80 border-r border-slate-200 bg-white flex flex-col h-full shrink-0 select-none">
       {/* Search Header */}
@@ -143,10 +125,17 @@ export const ComponentPalette: React.FC<ComponentPaletteProps> = ({
         {filteredComponents.map((comp) => (
           <div
             key={comp.type}
-            draggable
-            onDragStart={(e) => handleDragStart(e, comp)}
-            onDragEnd={handleDragEnd}
-            className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:shadow-xs rounded-lg p-2.5 transition-all cursor-grab active:cursor-grabbing flex items-start justify-between gap-2"
+            onPointerDown={(e) => {
+              startPointerDrag(
+                {
+                  sourceType: 'palette',
+                  componentType: comp.type,
+                  label: comp.displayName,
+                },
+                e
+              );
+            }}
+            className="group relative bg-white border border-slate-200 hover:border-blue-300 hover:shadow-xs rounded-lg p-2.5 transition-all cursor-grab active:cursor-grabbing flex items-start justify-between gap-2 touch-none"
           >
             <div className="flex items-start gap-2.5 min-w-0 flex-1">
               <div className="p-1.5 rounded-md bg-slate-50 group-hover:bg-blue-50/60 border border-slate-100 transition-colors shrink-0">
@@ -168,7 +157,11 @@ export const ComponentPalette: React.FC<ComponentPaletteProps> = ({
             </div>
 
             {/* Actions */}
-            <div className="flex flex-col items-end gap-1 shrink-0">
+            <div
+              className="flex flex-col items-end gap-1 shrink-0"
+              onMouseDown={(e) => e.stopPropagation()}
+              onDragStart={(e) => e.stopPropagation()}
+            >
               <button
                 type="button"
                 title="View documentation"
@@ -176,16 +169,19 @@ export const ComponentPalette: React.FC<ComponentPaletteProps> = ({
                   e.stopPropagation();
                   onOpenDocModal(comp.type);
                 }}
-                className="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50 transition-colors"
+                className="text-slate-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50 transition-colors cursor-pointer"
               >
                 <HelpCircle className="w-3.5 h-3.5" />
               </button>
 
               <button
                 type="button"
-                title="Add to canvas"
-                onClick={() => onSelectComponentToAdd(comp.type)}
-                className="p-1 bg-slate-100 hover:bg-[#0070d2] text-slate-700 hover:text-white rounded transition-colors shadow-2xs"
+                title="Add to canvas (or click container then +)"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSelectComponentToAdd(comp.type);
+                }}
+                className="p-1 bg-slate-100 hover:bg-[#0070d2] text-slate-700 hover:text-white rounded transition-colors shadow-2xs cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>

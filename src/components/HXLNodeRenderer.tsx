@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -40,10 +40,14 @@ import {
   getGlobalDragState,
   getLastDragState,
   setGlobalDragState,
-  useGlobalDrag,
+  subscribeGlobalDragState,
   serializeHxlDrag,
   parseHxlDragPayload,
   clearDragStateImmediately,
+  startPointerDrag,
+  useHoverTargetForNode,
+  usePointerDragState,
+  cancelPointerDrag,
 } from '../utils/dragManager';
 
 export interface DropPayload {
@@ -96,10 +100,15 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
   );
   const canHaveChildren = canComponentHaveChildren(node.type);
 
-  const activeDrag = useGlobalDrag();
-  const isThisNodeDragging = Boolean(activeDrag?.sourceType === 'canvas' && activeDrag?.nodeId === node.id);
-  const [dropPosition, setDropPosition] = useState<'inside' | 'before' | 'after' | null>(null);
-  const dragEnterCounter = React.useRef(0);
+  const pointerDropPosition = useHoverTargetForNode(node.id);
+  const pointerDragState = usePointerDragState();
+  const [localDragging, setLocalDragging] = useState(false);
+  const isThisNodeDragging =
+    (pointerDragState.isDragging && pointerDragState.item?.nodeId === node.id) || localDragging;
+  const [localDropPosition, setLocalDropPosition] = useState<'inside' | 'before' | 'after' | null>(null);
+  const dropPosition = pointerDropPosition || localDropPosition;
+  const setDropPosition = setLocalDropPosition;
+  const setIsThisNodeDragging = setLocalDragging;
 
   const handleDragStart = (e: React.DragEvent) => {
     if (isRoot) {
@@ -107,6 +116,8 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
       return;
     }
     e.stopPropagation();
+    setIsThisNodeDragging(true);
+
     const payload = {
       sourceType: 'canvas' as const,
       nodeId: node.id,
@@ -120,7 +131,7 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
       e.dataTransfer.setData('application/hxl-component', node.type);
     } catch {}
     e.dataTransfer.setData('text/plain', serialized);
-    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.effectAllowed = 'all';
 
     // Optional drag image setting
     const wrapper = document.getElementById(`hxl-wrapper-${node.id}`);
@@ -132,16 +143,14 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
   };
 
   const handleDragEnd = (e: React.DragEvent) => {
-    e.stopPropagation();
+    setIsThisNodeDragging(false);
     setDropPosition(null);
-    dragEnterCounter.current = 0;
     clearDragStateImmediately();
   };
 
   const handleDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    dragEnterCounter.current++;
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -153,7 +162,7 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
 
     // Prevent dropping onto oneself
     if (currentDrag.sourceType === 'canvas' && currentDrag.nodeId === node.id) {
-      setDropPosition(null);
+      if (dropPosition !== null) setDropPosition(null);
       return;
     }
 
@@ -162,20 +171,22 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
     const rect = e.currentTarget.getBoundingClientRect();
     const isHorizontal = parentType === 'tile/row';
 
+    let nextPos: 'inside' | 'before' | 'after' = 'inside';
+
     if (isHorizontal) {
       const offsetX = e.clientX - rect.left;
       const ratio = rect.width > 0 ? offsetX / rect.width : 0.5;
 
       if (canHaveChildren) {
         if (ratio < 0.25) {
-          setDropPosition('before');
+          nextPos = 'before';
         } else if (ratio > 0.75) {
-          setDropPosition('after');
+          nextPos = 'after';
         } else {
-          setDropPosition('inside');
+          nextPos = 'inside';
         }
       } else {
-        setDropPosition(ratio < 0.5 ? 'before' : 'after');
+        nextPos = ratio < 0.5 ? 'before' : 'after';
       }
     } else {
       const offsetY = e.clientY - rect.top;
@@ -183,34 +194,37 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
 
       if (canHaveChildren) {
         if (ratio < 0.25 && !isRoot) {
-          setDropPosition('before');
+          nextPos = 'before';
         } else if (ratio > 0.75 && !isRoot) {
-          setDropPosition('after');
+          nextPos = 'after';
         } else {
-          setDropPosition('inside');
+          nextPos = 'inside';
         }
       } else {
-        setDropPosition(ratio < 0.5 ? 'before' : 'after');
+        nextPos = ratio < 0.5 ? 'before' : 'after';
       }
     }
+
+    // Only update state if position actually changes to avoid thrashing
+    setDropPosition((prev) => (prev === nextPos ? prev : nextPos));
   };
 
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    dragEnterCounter.current = Math.max(0, dragEnterCounter.current - 1);
-    if (dragEnterCounter.current === 0) {
-      setDropPosition(null);
+    if (e.currentTarget.contains(e.relatedTarget as Node)) {
+      return;
     }
+    setDropPosition(null);
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    dragEnterCounter.current = 0;
 
     const currentPos = dropPosition || (canHaveChildren ? 'inside' : 'after');
     setDropPosition(null);
+    setIsThisNodeDragging(false);
 
     const payload = parseHxlDragPayload(e);
     clearDragStateImmediately();
@@ -236,10 +250,7 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
     }
   };
 
-  const dragDropProps = {
-    draggable: !isRoot,
-    onDragStart: handleDragStart,
-    onDragEnd: handleDragEnd,
+  const dropTargetProps = {
     onDragEnter: handleDragEnter,
     onDragOver: handleDragOver,
     onDragLeave: handleDragLeave,
@@ -254,7 +265,8 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
     onDragOver: (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      e.dataTransfer.dropEffect = 'copy';
+      const currentDrag = getGlobalDragState() || getLastDragState();
+      e.dataTransfer.dropEffect = currentDrag?.sourceType === 'palette' ? 'copy' : 'move';
       setDropPosition('inside');
     },
     onDragLeave: (e: React.DragEvent) => {
@@ -349,14 +361,6 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
                     parentType={node.type}
                   />
                 ))}
-                {activeDrag && (
-                  <div
-                    {...appendZoneProps}
-                    className="border border-dashed border-blue-300 bg-blue-50/30 hover:bg-blue-50/70 rounded py-1.5 px-3 text-center text-3xs text-blue-600 font-medium transition-colors"
-                  >
-                    + Append into Container
-                  </div>
-                )}
               </>
             ) : (
               <div
@@ -418,14 +422,6 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
                     parentType={node.type}
                   />
                 ))}
-                {activeDrag && (
-                  <div
-                    {...appendZoneProps}
-                    className="border border-dashed border-blue-300 bg-blue-50/30 hover:bg-blue-50/70 rounded py-1.5 px-3 text-center text-3xs text-blue-600 font-medium transition-colors"
-                  >
-                    + Append into Column
-                  </div>
-                )}
               </>
             ) : (
               <div
@@ -488,14 +484,6 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
                     parentType={node.type}
                   />
                 ))}
-                {activeDrag && (
-                  <div
-                    {...appendZoneProps}
-                    className="border border-dashed border-blue-300 bg-blue-50/30 hover:bg-blue-50/70 rounded px-2.5 py-1 text-center text-3xs text-blue-600 font-medium self-stretch flex items-center justify-center shrink-0 transition-colors"
-                  >
-                    + Append
-                  </div>
-                )}
               </>
             ) : (
               <div
@@ -960,24 +948,6 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
                     parentType={node.type}
                   />
                 ))}
-                {activeDrag && (
-                  <div
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setDropPosition('inside');
-                    }}
-                    onDragLeave={(e) => {
-                      e.preventDefault();
-                      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-                      setDropPosition(null);
-                    }}
-                    onDrop={handleDrop}
-                    className="p-2 text-center text-3xs text-blue-600 font-medium border border-dashed border-blue-300 bg-blue-50/30 hover:bg-blue-50/70 transition-colors"
-                  >
-                    + Append into List
-                  </div>
-                )}
               </>
             ) : (
               <div
@@ -1060,24 +1030,6 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
                     parentType={node.type}
                   />
                 ))}
-                {activeDrag && (
-                  <div
-                    onDragOver={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setDropPosition('inside');
-                    }}
-                    onDragLeave={(e) => {
-                      e.preventDefault();
-                      if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-                      setDropPosition(null);
-                    }}
-                    onDrop={handleDrop}
-                    className="p-2 text-center text-3xs text-blue-600 font-medium border border-dashed border-blue-300 bg-blue-50/30 hover:bg-blue-50/70 transition-colors"
-                  >
-                    + Append into Accordion
-                  </div>
-                )}
               </>
             ) : (
               <div
@@ -1127,14 +1079,6 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
                         parentType={node.type}
                       />
                     ))}
-                    {activeDrag && (
-                      <div
-                        {...appendZoneProps}
-                        className="text-3xs text-blue-600 font-medium text-center py-1.5 border border-dashed border-blue-300 bg-blue-50/30 hover:bg-blue-50/70 rounded transition-colors"
-                      >
-                        + Append panel item
-                      </div>
-                    )}
                   </>
                 ) : (
                   <div
@@ -1175,14 +1119,6 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
                     parentType={node.type}
                   />
                 ))}
-                {activeDrag && (
-                  <div
-                    {...appendZoneProps}
-                    className="border border-dashed border-blue-300 bg-blue-50/30 hover:bg-blue-50/70 rounded py-2 text-center text-xs text-blue-600 font-medium transition-colors"
-                  >
-                    + Append to Widget
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -1195,22 +1131,18 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
     return (
       <div
         id={`hxl-wrapper-${node.id}`}
+        data-hxl-target-id={node.id}
+        data-hxl-can-nest="true"
+        data-hxl-is-root="true"
         onDragEnter={handleDragEnter}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
-        className={`relative w-full ${
-          dropPosition === 'inside' ? 'ring-2 ring-emerald-500 rounded-lg p-0.5' : ''
+        className={`relative w-full transition-all duration-150 ${
+          dropPosition === 'inside' ? 'ring-2 ring-emerald-500 rounded-lg' : ''
         }`}
       >
         {renderContent()}
-
-        {/* Drop zone indicator when dragging inside root */}
-        {dropPosition === 'inside' && (
-          <div className="mt-3 border-2 border-dashed border-emerald-500 bg-emerald-50/50 rounded-lg p-3 text-center text-xs text-emerald-700 font-semibold flex items-center justify-center gap-1.5 pointer-events-none animate-in fade-in">
-            <span>+ Drop to append to widget root</span>
-          </div>
-        )}
       </div>
     );
   }
@@ -1241,11 +1173,13 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
   return (
     <div
       id={`hxl-wrapper-${node.id}`}
-      {...dragDropProps}
+      data-hxl-target-id={node.id}
+      data-hxl-can-nest={canHaveChildren ? 'true' : 'false'}
+      data-hxl-is-horizontal={isHorizontalParent ? 'true' : 'false'}
+      data-hxl-is-root="false"
+      {...dropTargetProps}
       onClick={handleClick}
       className={`relative group/hxl-node select-none ${widthClass} ${
-        !isRoot ? 'cursor-grab active:cursor-grabbing' : ''
-      } ${
         isThisNodeDragging ? 'opacity-40 ring-2 ring-blue-500 ring-dashed rounded' : ''
       } ${
         dropPosition === 'inside'
@@ -1273,17 +1207,20 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
       {/* Floating Grip Handle */}
       {!isRoot && (
         <div
-          draggable={true}
-          onDragStart={(e) => {
+          onPointerDown={(e) => {
             e.stopPropagation();
-            handleDragStart(e);
-          }}
-          onDragEnd={(e) => {
-            e.stopPropagation();
-            handleDragEnd(e);
+            startPointerDrag(
+              {
+                sourceType: 'canvas',
+                nodeId: node.id,
+                componentType: node.type,
+                label: node.type.replace('tile/', ''),
+              },
+              e
+            );
           }}
           title="Drag to reorder component"
-          className={`absolute -top-3 left-2 z-40 ${
+          className={`absolute -top-3 left-2 z-40 touch-none ${
             isSelected || isThisNodeDragging ? 'flex' : 'hidden group-hover/hxl-node:flex'
           } bg-slate-900 text-white rounded px-1.5 py-0.5 text-3xs font-mono items-center gap-1 cursor-grab active:cursor-grabbing shadow-md border border-slate-700 hover:bg-[#0070d2] select-none transition-colors`}
         >
@@ -1291,6 +1228,19 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
           <span className="font-semibold text-slate-200">
             {isThisNodeDragging ? 'Moving...' : node.type.replace('tile/', '')}
           </span>
+          {isThisNodeDragging && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                cancelPointerDrag();
+              }}
+              title="Cancel moving (or press Esc)"
+              className="ml-1 px-1 rounded bg-rose-600 hover:bg-rose-500 text-white text-3xs font-sans leading-none cursor-pointer"
+            >
+              ✕
+            </button>
+          )}
         </div>
       )}
 

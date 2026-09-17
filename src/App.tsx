@@ -38,6 +38,8 @@ import { CanvasRenderer } from './components/CanvasRenderer';
 import { InspectorPanel } from './components/InspectorPanel';
 import { JsonViewPanel } from './components/JsonViewPanel';
 import { ComponentDocModal } from './components/ComponentDocModal';
+import { DragOverlay } from './components/DragOverlay';
+import { registerGlobalDropCallback } from './utils/dragManager';
 
 const STORAGE_KEY = 'salesforce_hxl_widget_composer_bundle_v1';
 
@@ -262,6 +264,19 @@ export default function App() {
     commitBundleChange(updatedBundle);
     setSelectedNodeId(sourceId);
   };
+
+  // Register pointer drag global drop callback
+  useEffect(() => {
+    return registerGlobalDropCallback((source, target) => {
+      if (source.sourceType === 'palette' && source.componentType) {
+        handleInsertNode(source.componentType, target.targetNodeId, target.position);
+      } else if (source.sourceType === 'canvas' && source.nodeId) {
+        if (source.nodeId !== target.targetNodeId) {
+          handleReorderNode(source.nodeId, target.targetNodeId, target.position);
+        }
+      }
+    });
+  }, [bundle, handleInsertNode, handleReorderNode]);
 
   // Update mock data for live visual preview
   const handleUpdateMockData = (key: string, value: any) => {
@@ -534,7 +549,7 @@ export default function App() {
                 onMoveNode={handleMoveNode}
                 onDuplicateNode={handleDuplicateNode}
                 onDeleteNode={handleDeleteNode}
-                onInsertNode={(type, targetId) => handleInsertNode(type, targetId, 'inside')}
+                onInsertNode={(type, targetId, pos) => handleInsertNode(type, targetId, pos || 'inside')}
                 onReorderNode={handleReorderNode}
               />
             )}
@@ -621,6 +636,9 @@ export default function App() {
         onClose={() => setDocModalOpen(false)}
         onSelectComponentToAdd={(type) => handleInsertNode(type)}
       />
+
+      {/* Floating Pointer Drag Overlay */}
+      <DragOverlay />
     </div>
   );
 }
