@@ -443,7 +443,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
         className="flex-1 overflow-auto py-3 font-mono text-xs leading-relaxed text-slate-200 bg-slate-900 select-text"
       >
         {activeFileTab === 'composition' ? (
-          <div>
+          <div className="min-w-full w-fit">
             {compositionData.lines.map((line: JsonLineInfo) => {
               const isHighlighted = Boolean(
                 selectedRange &&
@@ -487,7 +487,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
                   </span>
 
                   {/* Code Line with Token Highlighting */}
-                  <div className="flex-1 overflow-x-auto whitespace-pre font-mono">
+                  <div className="whitespace-pre font-mono pr-4">
                     {highlightTokens(line.content)}
                   </div>
 
@@ -503,7 +503,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
             })}
           </div>
         ) : (
-          <div>
+          <div className="min-w-full w-fit">
             {otherTabLines.map((lineText: string, idx: number) => {
               const lineNum = idx + 1;
               return (
@@ -514,7 +514,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
                   <span className="w-9 shrink-0 pr-3 text-right select-none font-mono text-2xs text-slate-600">
                     {lineNum}
                   </span>
-                  <div className="flex-1 overflow-x-auto whitespace-pre font-mono">
+                  <div className="whitespace-pre font-mono pr-4">
                     {activeFileTab === 'meta'
                       ? highlightXmlTokens(lineText)
                       : highlightTokens(lineText)}
