@@ -228,18 +228,21 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
     });
   };
 
-  // When selectedNodeId changes, auto-switch to composition file tab and scroll to block
+  // When selectedNodeId changes to a different node, auto-switch to composition file tab and scroll to block
   const prevSelectedIdRef = useRef<string | null | undefined>(selectedNodeId);
   useEffect(() => {
+    // Only react when the selected node actually changes
+    if (prevSelectedIdRef.current === selectedNodeId) {
+      return;
+    }
+    prevSelectedIdRef.current = selectedNodeId;
+
     if (!selectedNodeId) {
-      prevSelectedIdRef.current = selectedNodeId;
       return;
     }
 
-    // If focused on a component while looking at another tab, switch to composition tab
-    if (activeFileTab !== 'composition') {
-      setActiveFileTab('composition');
-    }
+    // Switch to composition tab to highlight the selected component in JSON
+    setActiveFileTab('composition');
 
     const range = compositionData.nodeRanges[selectedNodeId];
     if (range) {
@@ -248,8 +251,14 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
       }, 50);
       return () => clearTimeout(timer);
     }
-    prevSelectedIdRef.current = selectedNodeId;
-  }, [selectedNodeId, activeFileTab, compositionData]);
+  }, [selectedNodeId, compositionData]);
+
+  // Reset scroll position when switching between file tabs
+  useEffect(() => {
+    if (codeContainerRef.current) {
+      codeContainerRef.current.scrollTop = 0;
+    }
+  }, [activeFileTab]);
 
   const getCurrentFileContent = () => {
     switch (activeFileTab) {
@@ -299,6 +308,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
         <div className="flex items-center gap-1">
           <button
             type="button"
+            id="tab-btn-composition"
             onClick={() => setActiveFileTab('composition')}
             className={`px-3 py-1.5 rounded-md font-mono text-2xs flex items-center gap-1.5 transition-colors ${
               activeFileTab === 'composition'
@@ -315,6 +325,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
 
           <button
             type="button"
+            id="tab-btn-schema"
             onClick={() => setActiveFileTab('schema')}
             className={`px-3 py-1.5 rounded-md font-mono text-2xs flex items-center gap-1.5 transition-colors ${
               activeFileTab === 'schema'
@@ -328,6 +339,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
 
           <button
             type="button"
+            id="tab-btn-meta"
             onClick={() => setActiveFileTab('meta')}
             className={`px-3 py-1.5 rounded-md font-mono text-2xs flex items-center gap-1.5 transition-colors ${
               activeFileTab === 'meta'
@@ -341,6 +353,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
 
           <button
             type="button"
+            id="tab-btn-mock"
             onClick={() => setActiveFileTab('mock')}
             className={`px-3 py-1.5 rounded-md font-mono text-2xs flex items-center gap-1.5 transition-colors ${
               activeFileTab === 'mock'
@@ -357,6 +370,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
         <div className="flex items-center gap-2">
           <button
             type="button"
+            id="btn-copy-file"
             onClick={handleCopy}
             className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs flex items-center gap-1.5 transition-colors border border-slate-700"
           >
@@ -375,6 +389,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
 
           <button
             type="button"
+            id="btn-download-file"
             onClick={handleDownloadCurrent}
             className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-xs flex items-center gap-1.5 transition-colors border border-slate-700"
           >
@@ -384,6 +399,7 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
 
           <button
             type="button"
+            id="btn-export-dx-bundle"
             onClick={handleDownloadZip}
             className="px-3 py-1 bg-[#0070d2] hover:bg-blue-600 text-white rounded text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
           >
