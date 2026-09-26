@@ -17,9 +17,9 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react';
-import { HXLComponentDoc, HXLNode, HXLSchema, HXLSchemaAttribute } from '../types/hxl';
+import { HXLComponentDoc, HXLNode, HXLNodeMeta, HXLSchema, HXLSchemaAttribute } from '../types/hxl';
 import { HXL_COMPONENTS } from '../data/hxlComponentCatalog';
-import { scanForAttributes } from '../utils/hxlUtils';
+import { mapToLightningType, scanForAttributes } from '../utils/hxlUtils';
 
 interface InspectorPanelProps {
   selectedNode: HXLNode | null;
@@ -27,6 +27,7 @@ interface InspectorPanelProps {
   schema: HXLSchema;
   mockData: Record<string, any>;
   onUpdateProperty: (propName: string, value: any) => void;
+  onUpdateMeta?: (meta: Partial<HXLNodeMeta>) => void;
   onUpdateMockData: (key: string, value: any) => void;
   onAddSchemaAttribute: (
     key: string,
@@ -50,6 +51,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   schema,
   mockData,
   onUpdateProperty,
+  onUpdateMeta,
   onUpdateMockData,
   onAddSchemaAttribute,
   onUpdateSchemaAttribute,
@@ -64,6 +66,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
   const [newAttrTitle, setNewAttrTitle] = useState('');
   const [newAttrDescription, setNewAttrDescription] = useState('');
   const [newAttrType, setNewAttrType] = useState<HXLSchemaAttribute['type']>('string');
+  const [newAttrLightningType, setNewAttrLightningType] = useState('lightning__textType');
   const [newAttrDefault, setNewAttrDefault] = useState('');
   const [newAttrRequired, setNewAttrRequired] = useState(false);
   const [showAddAttrForm, setShowAddAttrForm] = useState(false);
@@ -91,6 +94,9 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     if (newAttrType === 'number') val = Number(newAttrDefault) || 0;
     if (newAttrType === 'boolean') val = newAttrDefault === 'true';
 
+    const effectiveLightningType =
+      newAttrLightningType || mapToLightningType(key, newAttrType);
+
     onAddSchemaAttribute(
       key,
       {
@@ -99,6 +105,8 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
         description:
           newAttrDescription.trim() || `Attribute bound to {!$attrs.${key}}`,
         default: val,
+        'lightning:type': effectiveLightningType,
+        lightningType: effectiveLightningType,
       },
       val,
       newAttrRequired,
@@ -109,6 +117,7 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
     setNewAttrDescription('');
     setNewAttrDefault('');
     setNewAttrType('string');
+    setNewAttrLightningType('lightning__textType');
     setNewAttrRequired(false);
     setShowAddAttrForm(false);
   };
@@ -370,6 +379,103 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                     </div>
                   );
                 })}
+
+                {/* Meta Rendering Logic (meta.if and meta.forEach) per official Salesforce HXL docs */}
+                <div className="pt-4 border-t border-slate-200 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-2xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-purple-600" />
+                      <span>Conditional & Iteration (meta)</span>
+                    </span>
+                    <span className="text-3xs font-mono bg-purple-50 text-purple-700 px-1.5 py-0.5 rounded border border-purple-200">
+                      HXL meta
+                    </span>
+                  </div>
+
+                  {/* meta.if */}
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <label className="text-xs font-semibold text-slate-700">
+                        Conditional Render (<code className="font-mono text-2xs text-purple-700">meta.if</code>)
+                      </label>
+                      {schemaKeys.length > 0 && (
+                        <div className="relative group">
+                          <button
+                            type="button"
+                            className="text-3xs text-[#0070d2] font-mono hover:underline flex items-center gap-0.5"
+                          >
+                            <span>+ Bind</span>
+                          </button>
+                          <div className="hidden group-hover:block absolute right-0 top-full mt-1 w-48 bg-white border border-slate-200 shadow-xl rounded-md p-1 z-30 max-h-48 overflow-y-auto">
+                            {schemaKeys.map((k) => (
+                              <button
+                                key={k}
+                                type="button"
+                                onClick={() => onUpdateMeta?.({ if: `{!$attrs.${k}}` })}
+                                className="w-full text-left px-2 py-1 text-xs hover:bg-blue-50 text-slate-700 rounded font-mono truncate"
+                              >
+                                {`{!$attrs.${k}}`}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="e.g. {!$attrs.isVerified} or {!$attrs.price < 500}"
+                      value={selectedNode.meta?.if || ''}
+                      onChange={(e) => onUpdateMeta?.({ if: e.target.value })}
+                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-purple-500 focus:outline-hidden"
+                    />
+                    <p className="text-3xs text-slate-400">
+                      Renders component only when expression evaluates to true.
+                    </p>
+                  </div>
+
+                  {/* meta.forEach */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-slate-700 block">
+                      List Repeat (<code className="font-mono text-2xs text-indigo-700">meta.forEach</code>)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. {!$attrs.amenities} or {!$attrs.items}"
+                      value={selectedNode.meta?.forEach || ''}
+                      onChange={(e) => onUpdateMeta?.({ forEach: e.target.value })}
+                      className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-300 rounded-md focus:ring-1 focus:ring-indigo-500 focus:outline-hidden"
+                    />
+                  </div>
+
+                  {selectedNode.meta?.forEach && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-3xs uppercase font-bold text-slate-500 block mb-0.5">
+                          Item Var (<code className="font-mono text-3xs">forItem</code>)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="$item"
+                          value={selectedNode.meta?.forItem || ''}
+                          onChange={(e) => onUpdateMeta?.({ forItem: e.target.value })}
+                          className="w-full px-2 py-1 text-xs font-mono bg-white border border-slate-300 rounded-md"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-3xs uppercase font-bold text-slate-500 block mb-0.5">
+                          Index Var (<code className="font-mono text-3xs">forIndex</code>)
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="$index"
+                          value={selectedNode.meta?.forIndex || ''}
+                          onChange={(e) => onUpdateMeta?.({ forIndex: e.target.value })}
+                          className="w-full px-2 py-1 text-xs font-mono bg-white border border-slate-300 rounded-md"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </>
           ) : (
@@ -555,7 +661,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                   </label>
                   <select
                     value={newAttrType}
-                    onChange={(e) => setNewAttrType(e.target.value as any)}
+                    onChange={(e) => {
+                      const t = e.target.value as any;
+                      setNewAttrType(t);
+                      setNewAttrLightningType(mapToLightningType(newAttrKey || 'attr', t));
+                    }}
                     className="w-full px-2 py-1 text-xs bg-white border border-slate-300 rounded"
                   >
                     <option value="string">String</option>
@@ -567,16 +677,35 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                 </div>
                 <div>
                   <label className="text-2xs text-slate-700 font-semibold block mb-0.5">
-                    Default Mock Value
+                    Lightning Type (<code className="font-mono text-3xs">lightning:type</code>)
                   </label>
-                  <input
-                    type="text"
-                    placeholder="e.g. In Progress, 42"
-                    value={newAttrDefault}
-                    onChange={(e) => setNewAttrDefault(e.target.value)}
-                    className="w-full px-2 py-1 text-xs bg-white border border-slate-300 rounded"
-                  />
+                  <select
+                    value={newAttrLightningType}
+                    onChange={(e) => setNewAttrLightningType(e.target.value)}
+                    className="w-full px-2 py-1 text-xs bg-white border border-slate-300 rounded font-mono text-3xs"
+                  >
+                    <option value="lightning__textType">lightning__textType</option>
+                    <option value="lightning__numberType">lightning__numberType</option>
+                    <option value="lightning__urlType">lightning__urlType</option>
+                    <option value="lightning__booleanType">lightning__booleanType</option>
+                    <option value="lightning__dateTimeType">lightning__dateTimeType</option>
+                    <option value="lightning__objectType">lightning__objectType</option>
+                    <option value="lightning__arrayType">lightning__arrayType</option>
+                  </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="text-2xs text-slate-700 font-semibold block mb-0.5">
+                  Default Mock Value
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. In Progress, 42"
+                  value={newAttrDefault}
+                  onChange={(e) => setNewAttrDefault(e.target.value)}
+                  className="w-full px-2 py-1 text-xs bg-white border border-slate-300 rounded"
+                />
               </div>
 
               <label className="flex items-center gap-2 cursor-pointer pt-1">
@@ -649,8 +778,11 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                       <span className="font-mono text-xs font-bold text-blue-700 truncate">
                         {`{!$attrs.${key}}`}
                       </span>
-                      <span className="text-3xs font-mono bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-medium">
-                        {attr.type}
+                      <span
+                        className="text-3xs font-mono bg-blue-50 text-blue-700 px-1.5 py-0.2 rounded font-semibold border border-blue-200"
+                        title="Official Lightning Type"
+                      >
+                        {(attr as any)['lightning:type'] || attr.lightningType || mapToLightningType(key, attr.type)}
                       </span>
                       {isRequired && (
                         <span className="text-3xs bg-amber-50 text-amber-700 font-semibold px-1 rounded border border-amber-200">
@@ -708,26 +840,29 @@ export const InspectorPanel: React.FC<InspectorPanelProps> = ({
                         />
                       </div>
 
-                      {/* Data Type & Required Toggle */}
+                      {/* Lightning Type & Required Toggle */}
                       <div className="grid grid-cols-2 gap-2 items-center">
                         <div>
                           <label className="text-3xs uppercase font-bold text-slate-500 block mb-0.5">
-                            Data Type
+                            Lightning Type (<code className="font-mono text-3xs">lightning:type</code>)
                           </label>
                           <select
-                            value={attr.type || 'string'}
+                            value={(attr as any)['lightning:type'] || attr.lightningType || mapToLightningType(key, attr.type)}
                             onChange={(e) =>
                               onUpdateSchemaAttribute(key, {
-                                type: e.target.value as any,
+                                'lightning:type': e.target.value,
+                                lightningType: e.target.value,
                               })
                             }
-                            className="w-full px-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded focus:bg-white text-slate-700"
+                            className="w-full px-2 py-1 text-xs bg-slate-50 border border-slate-200 rounded focus:bg-white text-slate-700 font-mono text-3xs"
                           >
-                            <option value="string">String</option>
-                            <option value="number">Number</option>
-                            <option value="boolean">Boolean</option>
-                            <option value="object">Object</option>
-                            <option value="array">Array</option>
+                            <option value="lightning__textType">lightning__textType</option>
+                            <option value="lightning__numberType">lightning__numberType</option>
+                            <option value="lightning__urlType">lightning__urlType</option>
+                            <option value="lightning__booleanType">lightning__booleanType</option>
+                            <option value="lightning__dateTimeType">lightning__dateTimeType</option>
+                            <option value="lightning__objectType">lightning__objectType</option>
+                            <option value="lightning__arrayType">lightning__arrayType</option>
                           </select>
                         </div>
                         <div className="pt-3">

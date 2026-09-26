@@ -50,7 +50,19 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed.root && parsed.schema) return parsed;
+        if (parsed.root && parsed.schema) {
+          // If legacy saved state has root that is not tile/widget, wrap it as a proper widgetBody
+          if (parsed.root.type !== 'tile/widget') {
+            parsed.root = {
+              id: 'root_widget',
+              type: 'tile/widget',
+              definition: 'tile/widget',
+              properties: {},
+              children: [parsed.root],
+            };
+          }
+          return parsed;
+        }
       }
     } catch (e) {
       console.error('Failed to parse saved bundle from localStorage', e);
@@ -201,6 +213,30 @@ export default function App() {
     const newRoot = updateNodeProperties(bundle.root, selectedNodeId, { [propName]: value });
 
     // Synchronize schema and mock values
+    const { schema: syncedSchema, mockData: syncedMock } = syncSchemaWithTree(
+      newRoot,
+      bundle.schema,
+      bundle.mockData,
+    );
+
+    const updatedBundle: HXLWidgetBundle = {
+      ...bundle,
+      root: newRoot,
+      schema: syncedSchema,
+      mockData: syncedMock,
+    };
+
+    commitBundleChange(updatedBundle);
+  };
+
+  // Update rendering meta instructions (if, forEach, forItem, forIndex) on selected node
+  const handleUpdateMeta = (metaUpdate: Record<string, any>) => {
+    if (!selectedNodeId) return;
+    const targetNode = findNode(bundle.root, selectedNodeId);
+    if (!targetNode) return;
+    const updatedMeta = { ...(targetNode.meta || {}), ...metaUpdate };
+    const newRoot = updateNodeProperties(bundle.root, selectedNodeId, {}, updatedMeta);
+
     const { schema: syncedSchema, mockData: syncedMock } = syncSchemaWithTree(
       newRoot,
       bundle.schema,
@@ -419,33 +455,53 @@ export default function App() {
       description: 'Custom composed HXL widget for Salesforce Lightning & Agentforce.',
       widgetType: 'JSON',
       root: {
-        id: 'root_card',
-        type: 'tile/container',
-        properties: { variant: 'card', padding: 'medium', rounded: 'medium' },
+        id: 'root_widget',
+        type: 'tile/widget',
+        definition: 'tile/widget',
+        properties: {},
         children: [
           {
-            id: 'text_title',
-            type: 'tile/text',
-            properties: { text: '{!$attrs.title}', variant: 'h3', weight: 'bold' },
-          },
-          {
-            id: 'text_desc',
-            type: 'tile/text',
-            properties: { text: '{!$attrs.description}', variant: 'body', color: 'muted' },
+            id: 'card_main',
+            type: 'tile/card',
+            definition: 'tile/card',
+            properties: { padding: 'lg', variant: 'default', maxWidth: 'full' },
+            children: [
+              {
+                id: 'text_title',
+                type: 'tile/text',
+                definition: 'tile/text',
+                properties: { text: '{!$attrs.title}', variant: 'h3', weight: 'semibold' },
+              },
+              {
+                id: 'text_desc',
+                type: 'tile/text',
+                definition: 'tile/text',
+                properties: { text: '{!$attrs.description}', variant: 'body' },
+              },
+            ],
           },
         ],
       },
       schema: {
-        $schema: 'http://json-schema.org/draft-07/schema#',
+        title: 'New HXL Widget Card',
+        description: 'Custom composed HXL widget for Salesforce Lightning & Agentforce.',
         type: 'object',
         properties: {
           attributes: {
-            type: 'object',
+            'lightning:type': 'lightning__objectType',
             properties: {
-              title: { type: 'string', title: 'Card Title', default: 'My Custom Title' },
+              title: {
+                type: 'string',
+                title: 'Card Title',
+                description: 'Heading text for the widget card',
+                'lightning:type': 'lightning__textType',
+                default: 'My Custom Title',
+              },
               description: {
                 type: 'string',
                 title: 'Card Description',
+                description: 'Descriptive body text for the widget card',
+                'lightning:type': 'lightning__textType',
                 default: 'Drag components from the library to build your layout.',
               },
             },
@@ -460,7 +516,7 @@ export default function App() {
     };
 
     commitBundleChange(blank);
-    setSelectedNodeId('root_card');
+    setSelectedNodeId('card_main');
   };
 
   // Export full DX bundle
@@ -620,6 +676,7 @@ export default function App() {
           schema={bundle.schema}
           mockData={bundle.mockData}
           onUpdateProperty={handleUpdateProperty}
+          onUpdateMeta={handleUpdateMeta}
           onUpdateMockData={handleUpdateMockData}
           onAddSchemaAttribute={handleAddSchemaAttribute}
           onUpdateSchemaAttribute={handleUpdateSchemaAttribute}

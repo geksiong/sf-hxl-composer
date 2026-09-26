@@ -1,5 +1,5 @@
 import JSZip from 'jszip';
-import { HXLNode, HXLSchema, HXLSchemaAttribute, HXLWidgetBundle } from '../types/hxl';
+import { HXLNode, HXLNodeMeta, HXLSchema, HXLSchemaAttribute, HXLWidgetBundle } from '../types/hxl';
 
 /**
  * Regex to match {!$attrs.identifier} or {!$attrs.nested.path}
@@ -7,27 +7,37 @@ import { HXLNode, HXLSchema, HXLSchemaAttribute, HXLWidgetBundle } from '../type
 export const ATTR_REGEX = /\{!\$attrs\.([a-zA-Z0-9_.]+)\}/g;
 
 /**
- * Extract all attribute keys referenced via {!$attrs.key} in a node's properties
+ * Extract all attribute keys referenced via {!$attrs.key} in a node's properties and meta
  */
 export function scanForAttributes(root: HXLNode): string[] {
   const found = new Set<string>();
 
+  function scanValue(val: any) {
+    if (typeof val === 'string') {
+      const matches = val.matchAll(ATTR_REGEX);
+      for (const m of matches) {
+        if (m[1]) found.add(m[1]);
+      }
+    } else if (typeof val === 'object' && val !== null) {
+      const jsonStr = JSON.stringify(val);
+      const matches = jsonStr.matchAll(ATTR_REGEX);
+      for (const m of matches) {
+        if (m[1]) found.add(m[1]);
+      }
+    }
+  }
+
   function traverse(node: HXLNode) {
     if (!node) return;
-    if (node.properties) {
-      for (const val of Object.values(node.properties)) {
-        if (typeof val === 'string') {
-          const matches = val.matchAll(ATTR_REGEX);
-          for (const m of matches) {
-            if (m[1]) found.add(m[1]);
-          }
-        } else if (typeof val === 'object' && val !== null) {
-          const jsonStr = JSON.stringify(val);
-          const matches = jsonStr.matchAll(ATTR_REGEX);
-          for (const m of matches) {
-            if (m[1]) found.add(m[1]);
-          }
-        }
+    const props = node.attributes || node.properties;
+    if (props) {
+      for (const val of Object.values(props)) {
+        scanValue(val);
+      }
+    }
+    if (node.meta) {
+      for (const val of Object.values(node.meta)) {
+        scanValue(val);
       }
     }
     if (node.children && Array.isArray(node.children)) {
@@ -54,38 +64,60 @@ export function formatAttributeTitle(key: string): string {
 }
 
 /**
+ * Maps attribute key and basic type to official Salesforce Lightning type
+ * per https://developer.salesforce.com/docs/platform/hxl/guide/hxl-widget-schema.html
+ */
+export function mapToLightningType(key: string, attrType?: string, currentLightningType?: string): string {
+  if (currentLightningType && currentLightningType.startsWith('lightning__')) {
+    return currentLightningType;
+  }
+  const lowerKey = key.toLowerCase();
+  if (lowerKey.includes('url') || lowerKey.includes('link') || lowerKey.includes('src') || lowerKey.includes('image')) {
+    return 'lightning__urlType';
+  }
+  if (lowerKey.includes('date') || lowerKey.includes('time')) {
+    return 'lightning__dateTimeType';
+  }
+  if (attrType === 'number') return 'lightning__numberType';
+  if (attrType === 'boolean') return 'lightning__booleanType';
+  if (attrType === 'object') return 'lightning__objectType';
+  if (attrType === 'array') return 'lightning__objectType';
+  return 'lightning__textType';
+}
+
+/**
  * Infer default mock value for a newly discovered attribute token
  */
-export function inferDefaultMockValue(key: string): { type: HXLSchemaAttribute['type']; value: any } {
+export function inferDefaultMockValue(key: string): { type: HXLSchemaAttribute['type']; value: any; lightningType: string } {
   const lower = key.toLowerCase();
   if (lower.includes('percent') || lower.includes('progress') || lower.includes('score') || lower.includes('count') || lower.includes('qty')) {
-    return { type: 'number', value: 75 };
+    return { type: 'number', value: 75, lightningType: 'lightning__numberType' };
   }
-  if (lower.includes('price') || lower.includes('amount') || lower.includes('cost') || lower.includes('total')) {
-    return { type: 'string', value: '$120.00' };
+  if (lower.includes('price') || lower.includes('amount') || lower.includes('cost') || lower.includes('rate') || lower.includes('total')) {
+    return { type: 'string', value: '$120.00', lightningType: 'lightning__numberType' };
   }
   if (lower.includes('status') || lower.includes('stage')) {
-    return { type: 'string', value: 'Active' };
+    return { type: 'string', value: 'Active', lightningType: 'lightning__textType' };
   }
   if (lower.includes('priority')) {
-    return { type: 'string', value: 'High' };
+    return { type: 'string', value: 'High', lightningType: 'lightning__textType' };
   }
   if (lower.includes('date') || lower.includes('time')) {
-    return { type: 'string', value: 'Today, 2:30 PM' };
+    return { type: 'string', value: 'Today, 2:30 PM', lightningType: 'lightning__dateTimeType' };
   }
-  if (lower.includes('name') || lower.includes('user') || lower.includes('author') || lower.includes('customer')) {
-    return { type: 'string', value: 'Alex Morgan' };
+  if (lower.includes('name') || lower.includes('user') || lower.includes('author') || lower.includes('customer') || lower.includes('lead')) {
+    return { type: 'string', value: 'Alex Morgan', lightningType: 'lightning__textType' };
   }
-  if (lower.includes('url') || lower.includes('link')) {
-    return { type: 'string', value: 'https://salesforce.com' };
+  if (lower.includes('url') || lower.includes('link') || lower.includes('image') || lower.includes('src')) {
+    return { type: 'string', value: 'https://images.unsplash.com/photo-1566073771259-6a8506099945?w=800&auto=format&fit=crop&q=80', lightningType: 'lightning__urlType' };
   }
-  if (lower.includes('items') || lower.includes('rows') || lower.includes('list')) {
-    return { type: 'array', value: [{ title: 'Item 1' }, { title: 'Item 2' }] };
+  if (lower.includes('items') || lower.includes('rows') || lower.includes('list') || lower.includes('amenities')) {
+    return { type: 'array', value: [{ name: 'Pool' }, { name: 'Free Wi-Fi' }], lightningType: 'lightning__objectType' };
   }
-  if (lower.startsWith('is') || lower.startsWith('has') || lower.includes('enabled')) {
-    return { type: 'boolean', value: true };
+  if (lower.startsWith('is') || lower.startsWith('has') || lower.includes('enabled') || lower.includes('available')) {
+    return { type: 'boolean', value: true, lightningType: 'lightning__booleanType' };
   }
-  return { type: 'string', value: `Sample ${formatAttributeTitle(key)}` };
+  return { type: 'string', value: `Sample ${formatAttributeTitle(key)}`, lightningType: 'lightning__textType' };
 }
 
 /**
@@ -108,21 +140,32 @@ export function syncSchemaWithTree(
         title: formatAttributeTitle(key),
         description: `Attribute bound to {!$attrs.${key}}`,
         default: inference.value,
+        'lightning:type': inference.lightningType,
+        lightningType: inference.lightningType,
       };
       if (updatedMock[key] === undefined) {
         updatedMock[key] = inference.value;
       }
-    } else if (updatedMock[key] === undefined) {
-      updatedMock[key] = updatedProps[key].default !== undefined ? updatedProps[key].default : inferDefaultMockValue(key).value;
+    } else {
+      const cur = updatedProps[key];
+      if (!cur['lightning:type'] && !cur.lightningType) {
+        const lType = mapToLightningType(key, cur.type);
+        cur['lightning:type'] = lType;
+        cur.lightningType = lType;
+      }
+      if (updatedMock[key] === undefined) {
+        updatedMock[key] = cur.default !== undefined ? cur.default : inferDefaultMockValue(key).value;
+      }
     }
   }
 
   const newSchema: HXLSchema = {
-    $schema: currentSchema.$schema || 'http://json-schema.org/draft-07/schema#',
+    title: currentSchema.title || 'Widget Schema',
+    description: currentSchema.description || "Displays information for the widget's attribute contract",
     type: 'object',
     properties: {
       attributes: {
-        type: 'object',
+        'lightning:type': 'lightning__objectType',
         properties: updatedProps,
         required: currentSchema.properties.attributes.required || [],
       },
@@ -130,6 +173,35 @@ export function syncSchemaWithTree(
   };
 
   return { schema: newSchema, mockData: updatedMock };
+}
+
+/**
+ * Formats the exact schema.json structure documented at
+ * https://developer.salesforce.com/docs/platform/hxl/guide/hxl-widget-schema.html
+ */
+export function formatSchemaForExport(bundle: HXLWidgetBundle): any {
+  const currentProps = bundle.schema?.properties?.attributes?.properties || {};
+  const exportedAttributesProps: Record<string, any> = {};
+
+  for (const [key, attr] of Object.entries(currentProps)) {
+    exportedAttributesProps[key] = {
+      title: attr.title || formatAttributeTitle(key),
+      description: attr.description || `Attribute bound to {!$attrs.${key}}`,
+      'lightning:type': (attr as any)['lightning:type'] || attr.lightningType || mapToLightningType(key, attr.type),
+    };
+  }
+
+  return {
+    title: bundle.masterLabel || bundle.name || 'Widget Schema',
+    description: bundle.description || "Displays information for the widget's attribute contract",
+    type: 'object',
+    properties: {
+      attributes: {
+        'lightning:type': 'lightning__objectType',
+        properties: exportedAttributesProps,
+      },
+    },
+  };
 }
 
 /**
@@ -212,12 +284,20 @@ export function findParentNode(root: HXLNode, id: string): { parent: HXLNode; in
   return null;
 }
 
-export function updateNodeProperties(root: HXLNode, id: string, newProps: Record<string, any>): HXLNode {
+export function updateNodeProperties(
+  root: HXLNode,
+  id: string,
+  newProps: Record<string, any>,
+  newMeta?: HXLNodeMeta,
+): HXLNode {
   function cloneAndUpdate(node: HXLNode): HXLNode {
     if (node.id === id) {
+      const mergedProps = { ...(node.properties || {}), ...(node.attributes || {}), ...newProps };
       return {
         ...node,
-        properties: { ...node.properties, ...newProps },
+        properties: mergedProps,
+        attributes: mergedProps,
+        meta: newMeta !== undefined ? newMeta : node.meta,
       };
     }
     if (node.children) {
@@ -261,7 +341,6 @@ export function insertNode(
             newChildren.push(cloneAndInsert(child));
             newChildren.push(newNode);
           } else {
-            // position === 'inside' for this child
             newChildren.push(cloneAndInsert(child));
           }
         } else {
@@ -280,6 +359,7 @@ export function insertNode(
 export function canComponentHaveChildren(type: string): boolean {
   return [
     'tile/widget',
+    'tile/card',
     'tile/container',
     'tile/column',
     'tile/row',
@@ -350,7 +430,10 @@ export function duplicateNode(root: HXLNode, id: string): HXLNode {
     return {
       id: 'node_' + Math.random().toString(36).substr(2, 9),
       type: node.type,
-      properties: JSON.parse(JSON.stringify(node.properties || {})),
+      definition: node.definition || node.type,
+      properties: JSON.parse(JSON.stringify(node.properties || node.attributes || {})),
+      attributes: JSON.parse(JSON.stringify(node.attributes || node.properties || {})),
+      meta: node.meta ? JSON.parse(JSON.stringify(node.meta)) : undefined,
       children: node.children ? node.children.map(deepCloneWithNewIds) : undefined,
     };
   }
@@ -388,29 +471,90 @@ export function moveNode(root: HXLNode, id: string, direction: 'up' | 'down'): H
 }
 
 /**
- * Remove internal 'id' fields to produce clean Salesforce HXL composition JSON
+ * Cleans a single component according to official Salesforce HXL guidelines:
+ * - definition: component identifier string (e.g. "tile/card", "tile/text")
+ * - attributes: key-value pairs
+ * - meta: optional rendering instructions (if, forEach, forItem, forIndex)
+ * - children: optional array of nested child components
  */
-export function cleanNodeForExport(node: HXLNode): any {
-  const res: Record<string, any> = {
-    type: node.type,
+export function cleanComponentForExport(node: HXLNode): any {
+  const comp: Record<string, any> = {
+    definition: node.definition || node.type,
   };
-  if (node.properties && Object.keys(node.properties).length > 0) {
-    res.properties = node.properties;
+
+  // 1. Meta rendering instructions (if, forEach, forItem, forIndex)
+  if (node.meta) {
+    const cleanMeta: Record<string, any> = {};
+    if (node.meta.if && node.meta.if.trim()) cleanMeta.if = node.meta.if.trim();
+    if (node.meta.forEach && node.meta.forEach.trim()) cleanMeta.forEach = node.meta.forEach.trim();
+    if (node.meta.forItem && node.meta.forItem.trim()) cleanMeta.forItem = node.meta.forItem.trim();
+    if (node.meta.forIndex && node.meta.forIndex.trim()) cleanMeta.forIndex = node.meta.forIndex.trim();
+    if (Object.keys(cleanMeta).length > 0) {
+      comp.meta = cleanMeta;
+    }
   }
+
+  // 2. Component configuration attributes
+  const rawProps = node.attributes || node.properties;
+  if (rawProps && Object.keys(rawProps).length > 0) {
+    comp.attributes = rawProps;
+  }
+
+  // 3. Child components
   if (node.children && node.children.length > 0) {
-    res.children = node.children.map(cleanNodeForExport);
+    comp.children = node.children.map(cleanComponentForExport);
   }
-  return res;
+
+  return comp;
 }
 
 /**
- * Generate Salesforce DX Metadata XML
+ * Produces the complete, official Salesforce HXL widget composition JSON
+ * matching https://developer.salesforce.com/docs/platform/hxl/guide/hxl-widget-composition.html:
+ * {
+ *   "type": "lightning__agentforceWidget",
+ *   "contentBody": {
+ *     "widgetBody": {
+ *       "definition": "tile/widget",
+ *       "children": [ ... ]
+ *     }
+ *   }
+ * }
+ */
+export function cleanNodeForExport(root: HXLNode): any {
+  let widgetBodyObj: any;
+  const isRootWidget = root.type === 'tile/widget' || root.definition === 'tile/widget';
+
+  if (isRootWidget) {
+    widgetBodyObj = cleanComponentForExport(root);
+    widgetBodyObj.definition = 'tile/widget';
+  } else {
+    widgetBodyObj = {
+      definition: 'tile/widget',
+      children: [cleanComponentForExport(root)],
+    };
+  }
+
+  return {
+    type: 'lightning__agentforceWidget',
+    contentBody: {
+      widgetBody: widgetBodyObj,
+    },
+  };
+}
+
+/**
+ * Generate Salesforce DX Metadata XML per
+ * https://developer.salesforce.com/docs/platform/hxl/guide/hxl-widget-configuration.html
  */
 export function generateMetaXml(bundle: HXLWidgetBundle): string {
+  const masterLabel = bundle.masterLabel || bundle.name || 'Hotel Card';
+  const description = bundle.description || '';
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <UiWidgetBundle xmlns="http://soap.sforce.com/2006/04/metadata">
-    <masterLabel>${escapeXml(bundle.masterLabel || bundle.name)}</masterLabel>
-    <description>${escapeXml(bundle.description || '')}</description>
+    <masterLabel>${escapeXml(masterLabel)}</masterLabel>
+    <description>${escapeXml(description)}</description>
     <widgetType>JSON</widgetType>
 </UiWidgetBundle>`;
 }
@@ -430,7 +574,7 @@ function escapeXml(unsafe: string): string {
 }
 
 /**
- * Export full UiWidgetBundle ZIP package
+ * Export full UiWidgetBundle ZIP package matching Salesforce DX uiWidgets layout
  */
 export async function downloadUiWidgetBundleZip(bundle: HXLWidgetBundle): Promise<void> {
   const zip = new JSZip();
@@ -443,8 +587,8 @@ export async function downloadUiWidgetBundleZip(bundle: HXLWidgetBundle): Promis
   const compositionJson = JSON.stringify(cleanNodeForExport(bundle.root), null, 2);
   widgetFolder.file(`${folderName}.json`, compositionJson);
 
-  // 2. Schema file: schema.json
-  const schemaJson = JSON.stringify(bundle.schema, null, 2);
+  // 2. Schema file: schema.json (conforming to HXL schema documentation)
+  const schemaJson = JSON.stringify(formatSchemaForExport(bundle), null, 2);
   widgetFolder.file('schema.json', schemaJson);
 
   // 3. Metadata XML: {widgetName}.uiwidget-meta.xml
@@ -503,116 +647,244 @@ export interface HXLCompositionSerialization {
 }
 
 /**
- * Serializes an HXLNode tree to Salesforce composition JSON,
- * precisely tracking line numbers and ranges for each node ID.
+ * Serializes an HXLNode tree to official Salesforce composition JSON,
+ * accurately tracking line numbers and ranges for each node ID.
+ * Output conforms strictly to https://developer.salesforce.com/docs/platform/hxl/guide/hxl-widget-composition.html
  */
 export function serializeHxlComposition(root: HXLNode): HXLCompositionSerialization {
   const lines: JsonLineInfo[] = [];
   const nodeRanges: Record<string, HXLCompositionRange> = {};
   let currentLine = 1;
 
-  function serializeNode(node: HXLNode, depth: number, isLast: boolean) {
+  // Root opening brace
+  lines.push({
+    lineNumber: currentLine++,
+    content: '{',
+  });
+
+  // Top level type: lightning__agentforceWidget
+  lines.push({
+    lineNumber: currentLine++,
+    content: '  "type": "lightning__agentforceWidget",',
+  });
+
+  // Top level contentBody object
+  lines.push({
+    lineNumber: currentLine++,
+    content: '  "contentBody": {',
+  });
+
+  const isRootWidget = root.type === 'tile/widget' || root.definition === 'tile/widget';
+  const rootWidgetId = isRootWidget ? root.id : 'root_widget';
+  const widgetStartLine = currentLine;
+
+  lines.push({
+    lineNumber: currentLine++,
+    content: '    "widgetBody": {',
+    nodeId: rootWidgetId,
+    isStartOfNode: true,
+    nodeType: 'tile/widget',
+  });
+
+  // Determine what components go inside widgetBody
+  const widgetBodyNode: HXLNode = isRootWidget
+    ? root
+    : {
+        id: 'root_widget',
+        type: 'tile/widget',
+        definition: 'tile/widget',
+        properties: {},
+        children: [root],
+      };
+
+  serializeComponentBody(widgetBodyNode, 6, rootWidgetId);
+
+  const widgetEndLine = currentLine;
+  lines.push({
+    lineNumber: currentLine++,
+    content: '    }',
+    nodeId: rootWidgetId,
+    isEndOfNode: true,
+    nodeType: 'tile/widget',
+  });
+
+  nodeRanges[rootWidgetId] = {
+    startLine: widgetStartLine,
+    endLine: widgetEndLine,
+    type: 'tile/widget',
+  };
+
+  // Close contentBody
+  lines.push({
+    lineNumber: currentLine++,
+    content: '  }',
+  });
+
+  // Close root
+  lines.push({
+    lineNumber: currentLine++,
+    content: '}',
+  });
+
+  function serializeComponentBody(node: HXLNode, depth: number, parentNodeId: string) {
+    const innerIndent = ' '.repeat(depth);
+    const compDef = node.definition || node.type || 'tile/widget';
+
+    // 1. Definition
+    const cleanMeta: Record<string, any> = {};
+    if (node.meta) {
+      if (node.meta.if && node.meta.if.trim()) cleanMeta.if = node.meta.if.trim();
+      if (node.meta.forEach && node.meta.forEach.trim()) cleanMeta.forEach = node.meta.forEach.trim();
+      if (node.meta.forItem && node.meta.forItem.trim()) cleanMeta.forItem = node.meta.forItem.trim();
+      if (node.meta.forIndex && node.meta.forIndex.trim()) cleanMeta.forIndex = node.meta.forIndex.trim();
+    }
+    const hasMeta = Object.keys(cleanMeta).length > 0;
+
+    const rawProps = node.attributes || node.properties;
+    const hasAttributes = Boolean(rawProps && Object.keys(rawProps).length > 0);
+    const hasChildren = Boolean(node.children && node.children.length > 0);
+
+    const hasMoreAfterDef = hasMeta || hasAttributes || hasChildren;
+
+    lines.push({
+      lineNumber: currentLine++,
+      content: `${innerIndent}"definition": ${JSON.stringify(compDef)}${hasMoreAfterDef ? ',' : ''}`,
+      nodeId: parentNodeId,
+      nodeType: compDef,
+    });
+
+    // 2. Meta (rendering logic)
+    if (hasMeta) {
+      const hasMoreAfterMeta = hasAttributes || hasChildren;
+      lines.push({
+        lineNumber: currentLine++,
+        content: `${innerIndent}"meta": {`,
+        nodeId: parentNodeId,
+        nodeType: compDef,
+      });
+
+      const metaEntries = Object.entries(cleanMeta);
+      metaEntries.forEach(([mKey, mVal], mIdx) => {
+        const isLastMeta = mIdx === metaEntries.length - 1;
+        lines.push({
+          lineNumber: currentLine++,
+          content: `${innerIndent}  "${mKey}": ${JSON.stringify(mVal)}${isLastMeta ? '' : ','}`,
+          nodeId: parentNodeId,
+          nodeType: compDef,
+        });
+      });
+
+      lines.push({
+        lineNumber: currentLine++,
+        content: `${innerIndent}}${hasMoreAfterMeta ? ',' : ''}`,
+        nodeId: parentNodeId,
+        nodeType: compDef,
+      });
+    }
+
+    // 3. Attributes
+    if (hasAttributes && rawProps) {
+      const hasMoreAfterAttrs = hasChildren;
+      lines.push({
+        lineNumber: currentLine++,
+        content: `${innerIndent}"attributes": {`,
+        nodeId: parentNodeId,
+        nodeType: compDef,
+      });
+
+      const attrEntries = Object.entries(rawProps);
+      attrEntries.forEach(([aKey, aVal], aIdx) => {
+        const isLastAttr = aIdx === attrEntries.length - 1;
+        const valJson = JSON.stringify(aVal, null, 2);
+        const valLines = valJson.split('\n');
+
+        if (valLines.length === 1) {
+          lines.push({
+            lineNumber: currentLine++,
+            content: `${innerIndent}  "${aKey}": ${valJson}${isLastAttr ? '' : ','}`,
+            nodeId: parentNodeId,
+            nodeType: compDef,
+          });
+        } else {
+          lines.push({
+            lineNumber: currentLine++,
+            content: `${innerIndent}  "${aKey}": ${valLines[0]}`,
+            nodeId: parentNodeId,
+            nodeType: compDef,
+          });
+          for (let i = 1; i < valLines.length; i++) {
+            const isEndVal = i === valLines.length - 1;
+            lines.push({
+              lineNumber: currentLine++,
+              content: `${innerIndent}  ${valLines[i]}${isEndVal && !isLastAttr ? ',' : ''}`,
+              nodeId: parentNodeId,
+              nodeType: compDef,
+            });
+          }
+        }
+      });
+
+      lines.push({
+        lineNumber: currentLine++,
+        content: `${innerIndent}}${hasMoreAfterAttrs ? ',' : ''}`,
+        nodeId: parentNodeId,
+        nodeType: compDef,
+      });
+    }
+
+    // 4. Children
+    if (hasChildren && node.children) {
+      lines.push({
+        lineNumber: currentLine++,
+        content: `${innerIndent}"children": [`,
+        nodeId: parentNodeId,
+        nodeType: compDef,
+      });
+
+      for (let i = 0; i < node.children.length; i++) {
+        const isLastChild = i === node.children.length - 1;
+        serializeChildComponent(node.children[i], depth + 2, isLastChild);
+      }
+
+      lines.push({
+        lineNumber: currentLine++,
+        content: `${innerIndent}]`,
+        nodeId: parentNodeId,
+        nodeType: compDef,
+      });
+    }
+  }
+
+  function serializeChildComponent(node: HXLNode, depth: number, isLast: boolean) {
     const startLine = currentLine;
     const indent = ' '.repeat(depth);
-    const innerIndent = ' '.repeat(depth + 2);
+    const compDef = node.definition || node.type;
 
-    // Opening brace for this node
     lines.push({
       lineNumber: currentLine++,
       content: `${indent}{`,
       nodeId: node.id,
       isStartOfNode: true,
-      nodeType: node.type,
+      nodeType: compDef,
     });
 
-    const entries: string[] = ['type'];
-    if (node.properties && Object.keys(node.properties).length > 0) {
-      entries.push('properties');
-    }
-    if (node.children && node.children.length > 0) {
-      entries.push('children');
-    }
+    serializeComponentBody(node, depth + 2, node.id);
 
-    // 1. type
-    const hasMoreAfterType = entries.length > 1;
-    lines.push({
-      lineNumber: currentLine++,
-      content: `${innerIndent}"type": ${JSON.stringify(node.type)}${hasMoreAfterType ? ',' : ''}`,
-      nodeId: node.id,
-      nodeType: node.type,
-    });
-
-    // 2. properties
-    if (node.properties && Object.keys(node.properties).length > 0) {
-      const hasMoreAfterProps = entries.indexOf('properties') < entries.length - 1;
-      const propJson = JSON.stringify(node.properties, null, 2);
-      const rawPropLines = propJson.split('\n');
-
-      lines.push({
-        lineNumber: currentLine++,
-        content: `${innerIndent}"properties": {`,
-        nodeId: node.id,
-        nodeType: node.type,
-      });
-
-      for (let i = 1; i < rawPropLines.length - 1; i++) {
-        lines.push({
-          lineNumber: currentLine++,
-          content: `${innerIndent}${rawPropLines[i]}`,
-          nodeId: node.id,
-          nodeType: node.type,
-        });
-      }
-
-      lines.push({
-        lineNumber: currentLine++,
-        content: `${innerIndent}}${hasMoreAfterProps ? ',' : ''}`,
-        nodeId: node.id,
-        nodeType: node.type,
-      });
-    }
-
-    // 3. children
-    if (node.children && node.children.length > 0) {
-      const hasMoreAfterChildren = entries.indexOf('children') < entries.length - 1;
-      lines.push({
-        lineNumber: currentLine++,
-        content: `${innerIndent}"children": [`,
-        nodeId: node.id,
-        nodeType: node.type,
-      });
-
-      for (let i = 0; i < node.children.length; i++) {
-        const isLastChild = i === node.children.length - 1;
-        serializeNode(node.children[i], depth + 4, isLastChild);
-      }
-
-      lines.push({
-        lineNumber: currentLine++,
-        content: `${innerIndent}]${hasMoreAfterChildren ? ',' : ''}`,
-        nodeId: node.id,
-        nodeType: node.type,
-      });
-    }
-
-    // Closing brace for this node
     const endLine = currentLine;
     lines.push({
       lineNumber: currentLine++,
       content: `${indent}}${isLast ? '' : ','}`,
       nodeId: node.id,
       isEndOfNode: true,
-      nodeType: node.type,
+      nodeType: compDef,
     });
 
     nodeRanges[node.id] = {
       startLine,
       endLine,
-      type: node.type,
+      type: compDef,
     };
   }
-
-  serializeNode(root, 0, true);
 
   const fullJsonText = lines.map((l) => l.content).join('\n');
 
@@ -622,4 +894,5 @@ export function serializeHxlComposition(root: HXLNode): HXLCompositionSerializat
     nodeRanges,
   };
 }
+
 

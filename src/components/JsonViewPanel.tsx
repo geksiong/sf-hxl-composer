@@ -15,6 +15,7 @@ import { HXLWidgetBundle } from '../types/hxl';
 import {
   downloadTextFile,
   downloadUiWidgetBundleZip,
+  formatSchemaForExport,
   generateMetaXml,
   JsonLineInfo,
   serializeHxlComposition,
@@ -201,7 +202,10 @@ export const JsonViewPanel: React.FC<JsonViewPanelProps> = ({
     return serializeHxlComposition(bundle.root);
   }, [bundle.root]);
 
-  const schemaJsonStr = useMemo(() => JSON.stringify(bundle.schema, null, 2), [bundle.schema]);
+  const schemaJsonStr = useMemo(
+    () => JSON.stringify(formatSchemaForExport(bundle), null, 2),
+    [bundle],
+  );
   const metaXmlStr = useMemo(() => generateMetaXml(bundle), [bundle]);
   const mockJsonStr = useMemo(() => JSON.stringify(bundle.mockData, null, 2), [bundle.mockData]);
 

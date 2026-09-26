@@ -5,6 +5,88 @@ export const HXL_COMPONENTS: HXLComponentDoc[] = [
   // Layout
   // -------------------------------------------------------------
   {
+    type: 'tile/widget',
+    displayName: 'Widget Body (Root)',
+    category: 'Layout',
+    icon: 'Layers',
+    description: 'The mandatory root component for every HXL widget composition, encapsulating all child UI tiles.',
+    canHaveChildren: true,
+    officialProps: [],
+    defaultProperties: {},
+    exampleJson: {
+      definition: 'tile/widget',
+      children: [],
+    },
+    usageNotes: 'Every widget structure requires a root widgetBody component with its definition set to "tile/widget" within contentBody.',
+  },
+  {
+    type: 'tile/card',
+    displayName: 'Card',
+    category: 'Layout',
+    icon: 'Box',
+    description: 'Primary structured card container for HXL widgets, with configurable padding, variant, and maximum width.',
+    canHaveChildren: true,
+    officialProps: [
+      {
+        name: 'variant',
+        label: 'Card Variant',
+        type: 'select',
+        default: 'default',
+        description: 'Visual styling and elevation.',
+        options: [
+          { label: 'Default (Card with subtle border & shadow)', value: 'default' },
+          { label: 'Subtle (Tinted neutral background)', value: 'subtle' },
+          { label: 'Bordered (Outline only)', value: 'bordered' },
+          { label: 'Plain (No border or background)', value: 'plain' },
+        ],
+      },
+      {
+        name: 'padding',
+        label: 'Padding',
+        type: 'select',
+        default: 'lg',
+        description: 'Internal content padding spacing.',
+        options: [
+          { label: 'None', value: 'none' },
+          { label: 'Small (sm)', value: 'sm' },
+          { label: 'Medium (md)', value: 'md' },
+          { label: 'Large (lg - Standard)', value: 'lg' },
+        ],
+      },
+      {
+        name: 'maxWidth',
+        label: 'Maximum Width',
+        type: 'select',
+        default: 'full',
+        description: 'Constrain the maximum horizontal width of the card.',
+        options: [
+          { label: 'Full Width (100%)', value: 'full' },
+          { label: 'Small (max-w-sm)', value: 'sm' },
+          { label: 'Medium (max-w-md)', value: 'md' },
+          { label: 'Large (max-w-lg)', value: 'lg' },
+        ],
+      },
+    ],
+    defaultProperties: {
+      padding: 'lg',
+      variant: 'default',
+      maxWidth: 'full',
+    },
+    defaultChildren: (): HXLNode[] => [
+      {
+        id: 'node_' + Math.random().toString(36).substr(2, 9),
+        type: 'tile/text',
+        properties: { text: 'Card Content', variant: 'body' },
+      },
+    ],
+    exampleJson: {
+      definition: 'tile/card',
+      attributes: { padding: 'lg', variant: 'default', maxWidth: 'full' },
+      children: [],
+    },
+    usageNotes: 'Standard card wrapper used in the official Salesforce HXL Hotel Card and Agentforce tiles.',
+  },
+  {
     type: 'tile/container',
     displayName: 'Container',
     category: 'Layout',

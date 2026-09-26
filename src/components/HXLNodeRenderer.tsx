@@ -314,12 +314,16 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
   // -------------------------------------------------------------
   const renderContent = () => {
     switch (node.type) {
-      // 1. Container / Card
+      // 1. Card & Container
+      case 'tile/card':
       case 'tile/container': {
         const paddingMap: Record<string, string> = {
           none: 'p-0',
+          sm: 'p-2.5',
           small: 'p-2.5',
+          md: 'p-4',
           medium: 'p-4',
+          lg: 'p-6',
           large: 'p-6',
         };
         const radiusMap: Record<string, string> = {
@@ -327,6 +331,12 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
           small: 'rounded',
           medium: 'rounded-lg',
           large: 'rounded-xl',
+        };
+        const maxWidthMap: Record<string, string> = {
+          full: 'w-full',
+          sm: 'max-w-sm w-full',
+          md: 'max-w-md w-full',
+          lg: 'max-w-lg w-full',
         };
         const variantClass =
           p.variant === 'subtle'
@@ -337,14 +347,26 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
             ? 'bg-transparent'
             : 'bg-white border border-slate-200 shadow-sm';
 
+        const paddingKey = p.padding || (node.type === 'tile/card' ? 'lg' : 'medium');
+        const paddingClass = paddingMap[paddingKey] || 'p-4';
+        const maxWidthClass = p.maxWidth ? (maxWidthMap[p.maxWidth] || 'w-full') : 'w-full';
+
         return (
           <div
             id={node.id}
             onClick={handleClick}
-            className={`${wrapperClass} ${variantClass} ${radiusMap[p.rounded || 'medium']} ${
-              paddingMap[p.padding || 'medium']
-            } flex flex-col gap-3 min-w-48`}
+            className={`${wrapperClass} ${variantClass} ${radiusMap[p.rounded || 'medium']} ${paddingClass} ${maxWidthClass} flex flex-col gap-3 min-w-48`}
           >
+            {node.meta?.if && (
+              <span className="self-start -mt-1 mb-1 text-3xs font-mono font-semibold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+                if: {node.meta.if}
+              </span>
+            )}
+            {node.meta?.forEach && (
+              <span className="self-start -mt-1 mb-1 text-3xs font-mono font-semibold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                forEach: {node.meta.forEach}
+              </span>
+            )}
             {node.children && node.children.length > 0 ? (
               <>
                 {node.children.map((child) => (
@@ -367,7 +389,7 @@ export const HXLNodeRenderer: React.FC<HXLNodeRendererProps> = ({
                 {...appendZoneProps}
                 className="border-2 border-dashed border-blue-300 bg-blue-50/40 rounded p-4 text-center text-xs text-blue-600 font-medium hover:bg-blue-50/70 transition-colors"
               >
-                + Drop components into Container
+                + Drop components into {node.type === 'tile/card' ? 'Card' : 'Container'}
               </div>
             )}
           </div>
